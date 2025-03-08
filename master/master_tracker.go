@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
+	"dfs/utils"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
@@ -39,26 +39,6 @@ func NewMasterTracker() *MasterTracker {
 		dataKeepers: make(map[string]bool),
 	}
 }
-func printDataFrame(df dataframe.DataFrame) {
-	records := df.Records() // Get all rows as [][]string
-
-	if len(records) == 0 {
-		fmt.Println("Empty DataFrame")
-		return
-	}
-
-	// Print header
-	header := records[0]
-	fmt.Printf("| %-40s | %-20s | %-30s | %-10s |\n", header[0], header[1], header[2], header[3])
-	fmt.Println(strings.Repeat("-", 110))
-
-	// Print rows
-	for _, row := range records[1:] { // Skip header row
-		fmt.Printf("| %-40s | %-20s | %-30s | %-10s |\n", row[0], row[1], row[2], row[3])
-	}
-	fmt.Println(strings.Repeat("-", 110))
-}
-
 
 // RequestUpload assigns a Data Keeper for file upload and updates DataFrame
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
@@ -78,7 +58,7 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 	s.fileTable = s.fileTable.RBind(newRow)
 
 	log.Printf("[UPLOAD] File: %s assigned to Data Keeper: %s", req.Filename, dataKeeper)
-	printDataFrame(s.fileTable)
+	utils.PrintDataFrame(s.fileTable)
 	return &pb.UploadResponse{DataKeeperAddress: dataKeeper}, nil
 }
 
@@ -111,10 +91,10 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	return &pb.HeartbeatResponse{Success: true}, nil
 }
 
-// CheckInactiveDataKeepers runs every 10 seconds and marks nodes as down
+// CheckInactiveDataKeepers runs every 2 seconds and marks nodes as down
 func (s *MasterTracker) CheckInactiveDataKeepers() {
 	for {
-		time.Sleep(10 * time.Second)
+		time.Sleep(2 * time.Second)
 
 		s.mu.Lock()
 		for dk, alive := range s.dataKeepers {

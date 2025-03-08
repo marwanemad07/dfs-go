@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
 
+	"dfs/utils"
 	pb "dfs/proto"
 
 	"google.golang.org/grpc"
@@ -45,36 +44,7 @@ func main() {
 	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
 
 	// Send file via TCP
-	sendFile(dataKeeperAddr, filename)
+	utils.SendFile(dataKeeperAddr, filename)
 }
 
 // sendFile connects to Data Keeper and transfers the file over TCP
-func sendFile(address, filename string) {
-	// Open the file
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("Failed to open file: %v", err)
-	}
-	defer file.Close()
-
-	// Connect to Data Keeper over TCP
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		log.Fatalf("Failed to connect to Data Keeper: %v", err)
-	}
-	defer conn.Close()
-
-	// Send filename first
-	_, err = conn.Write([]byte(filename + "\n"))
-	if err != nil {
-		log.Fatalf("Failed to send filename: %v", err)
-	}
-
-	// Send file data
-	_, err = io.Copy(conn, file)
-	if err != nil {
-		log.Fatalf("Failed to send file data: %v", err)
-	}
-
-	fmt.Println("Upload complete!")
-}
