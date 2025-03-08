@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package dfs;
+
+// Master Tracker Service: Handles file upload/download requests and heartbeat updates.
+service MasterTracker {
+  // A client requests a Data Keeper to upload a file.
+  rpc RequestUpload(UploadRequest) returns (UploadResponse);
+  // A client requests addresses to download a file.
+  rpc RequestDownload(DownloadRequest) returns (DownloadResponse);
+  // Data Keeper sends a heartbeat to indicate it is alive.
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// Message definitions for file upload/download.
+message UploadRequest {
+  string filename = 1;
+}
+
+message UploadResponse {
+  string dataKeeperAddress = 1;
+}
+
+message DownloadRequest {
+  string filename = 1;
+}
+
+message DownloadResponse {
+  repeated string dataKeeperAddresses = 1;
+}
+
+// Message definitions for heartbeat.
+message HeartbeatRequest {
+  string dataKeeperId = 1;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+}
