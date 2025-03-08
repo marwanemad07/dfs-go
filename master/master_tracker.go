@@ -20,7 +20,7 @@ type MasterTracker struct {
 	pb.UnimplementedMasterTrackerServer
 	mu          sync.Mutex
 	fileTable   dataframe.DataFrame
-	dataKeepers map[string]bool // Tracks which Data Keepers are alive
+	dataKeepers map[string]time.Time // Tracks the last heartbeat timestamp
 }
 
 // NewMasterTracker initializes the Master Tracker
@@ -36,9 +36,10 @@ func NewMasterTracker() *MasterTracker {
 
 	return &MasterTracker{
 		fileTable:   df,
-		dataKeepers: make(map[string]bool),
+		dataKeepers: make(map[string]time.Time),
 	}
 }
+
 
 // RequestUpload assigns a Data Keeper for file upload and updates DataFrame
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
@@ -85,40 +86,52 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.dataKeepers[req.DataKeeperId] = true
-	log.Printf("[HEARTBEAT] Data Keeper: %s is alive", req.DataKeeperId)
+	s.dataKeepers[req.DataKeeperId] = time.Now()
 
+	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperId, s.dataKeepers[req.DataKeeperId])
 	return &pb.HeartbeatResponse{Success: true}, nil
 }
-
-// CheckInactiveDataKeepers runs every 2 seconds and marks nodes as down
+// CheckInactiveDataKeepers runs every 1 seconds and marks nodes as down
 func (s *MasterTracker) CheckInactiveDataKeepers() {
-	for {
-		time.Sleep(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second) // Run every 1 seconds
+	defer ticker.Stop()
 
+	for range ticker.C {
 		s.mu.Lock()
-		for dk, alive := range s.dataKeepers {
-			if !alive {
-				log.Printf("[WARNING] Data Keeper %s is DOWN!", dk)
+
+		now := time.Now()
+
+		for dk, lastHeartbeat := range s.dataKeepers {
+			if now.Sub(lastHeartbeat) > 1*time.Second { // If last heartbeat was more than 1 sec ago
+				log.Printf("[WARNING] Data Keeper %s is DOWN! (Last heartbeat: %v)", dk, lastHeartbeat)
+
+				// Update "is_alive" column to "false" for this Data Keeper
+				for i := 0; i < s.fileTable.Nrow(); i++ {
+					if s.fileTable.Elem(i, 1).String() == dk { // Column 1 = "data_keeper"
+						s.fileTable.Elem(i, 3).Set("false") // Column 3 = "is_alive"
+					}
+				}
 			}
-			s.dataKeepers[dk] = false // Reset for next check
 		}
+
 		s.mu.Unlock()
 	}
 }
-
 func main() {
 	lis, err := net.Listen("tcp", ":50050")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
+
+	// Create a single instance of MasterTracker
+	masterTracker := NewMasterTracker()
+
+	// Register it with the gRPC server
 	grpcServer := grpc.NewServer()
-	pb.RegisterMasterTrackerServer(grpcServer, NewMasterTracker())
+	pb.RegisterMasterTrackerServer(grpcServer, masterTracker)
 
 	// Start checking for inactive Data Keepers
-	go func(s *MasterTracker) {
-		s.CheckInactiveDataKeepers()
-	}(NewMasterTracker())
+	go masterTracker.CheckInactiveDataKeepers()
 
 	log.Println("Master Tracker is running on port 50050 🚀")
 	if err := grpcServer.Serve(lis); err != nil {
