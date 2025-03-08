@@ -1,6 +1,8 @@
-syntax = "proto3";
+syntax = "proto3"; // Use proto3 syntax for the protocol buffer.
 
-package dfs;
+package dfs; // Define the package name.
+
+option go_package = "dfs/proto"; // Set Go package path for generated files
 
 // Master Tracker Service: Handles file upload/download requests and heartbeat updates.
 service MasterTracker {
@@ -11,7 +13,7 @@ service MasterTracker {
   // Data Keeper sends a heartbeat to indicate it is alive.
   rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
-
+// schemas for file upload/download and heartbeat.
 // Message definitions for file upload/download.
 message UploadRequest {
   string filename = 1;
@@ -21,7 +23,7 @@ message UploadResponse {
   string dataKeeperAddress = 1;
 }
 
-message DownloadRequest {
+message DownloadRequest { 
   string filename = 1;
 }
 

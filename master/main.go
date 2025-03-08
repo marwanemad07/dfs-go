@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
-	pb "dfs/proto/dfs" // update this import path
+	pb "dfs/proto"
 )
 
 // server implements the MasterTracker sdfervice.
