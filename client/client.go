@@ -15,6 +15,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: client <upload/download> <filename>")
+		return
+	}
+
+	command := os.Args[1]
+	filename := os.Args[2]
+
 	// Connect to the Master Tracker
 	conn, err := grpc.Dial("localhost:50050", grpc.WithInsecure())
 	if err != nil {
@@ -23,8 +31,18 @@ func main() {
 	defer conn.Close()
 	client := pb.NewMasterTrackerClient(conn)
 
-	// File to upload
-	filename := "example.mp4"
+	switch command {
+	case "upload":
+		uploadFile(client, filename)
+	case "download":
+		downloadFile(client, filename)
+	default:
+		fmt.Println("Invalid command. Use 'upload' or 'download'.")
+	}
+}
+
+// Upload logic
+func uploadFile(client pb.MasterTrackerClient, filename string) {
 	fmt.Println("Uploading file:", filename)
 	dir, err := os.Getwd()
 	if err != nil {
@@ -32,19 +50,41 @@ func main() {
 	}
 	fullPath := filepath.Join(dir, filename)
 
-
-	// Request a Data Keeper for upload
+	// Request Data Keeper from Master Tracker
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	uploadResp, err := client.RequestUpload(ctx, &pb.UploadRequest{Filename: fullPath})
 	if err != nil {
 		log.Fatalf("Error requesting upload: %v", err)
 	}
+
 	dataKeeperAddr := uploadResp.DataKeeperAddress
 	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
 
-	// Send file via TCP
+	// Send file to Data Keeper via TCP
 	utils.SendFile(dataKeeperAddr, filename)
 }
 
-// sendFile connects to Data Keeper and transfers the file over TCP
+// Download logic
+func downloadFile(client pb.MasterTrackerClient, filename string) {
+	fmt.Println("Downloading file:", filename)
+
+	// Request file locations from Master Tracker
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
+	if err != nil {
+		log.Fatalf("Error requesting download: %v", err)
+	}
+
+	if len(downloadResp.DataKeeperAddresses) == 0 {
+		log.Fatalf("No Data Keeper has the requested file: %s", filename)
+	}
+
+	// Select the first available Data Keeper
+	dataKeeperAddr := downloadResp.DataKeeperAddresses[0]
+	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddr)
+
+	// Request and receive file via TCP
+	utils.ReceiveFile(dataKeeperAddr, filename)
+}
