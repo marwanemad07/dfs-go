@@ -4,6 +4,7 @@
 2. Unique File names on the same datanode
 3. Replicates
 4. Client download
+5. Create config file
 
 
 ### Enhancements

@@ -1,0 +1,9 @@
+{
+    "server": {
+      "port": 50050
+    },
+    "data_keeper": {
+      "heartbeat_timeout": 1
+    }
+  }
+  

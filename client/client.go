@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"dfs/utils"
+	"dfs/config"
 	pb "dfs/proto"
-
+	"dfs/utils"
 	"google.golang.org/grpc"
 )
 
@@ -24,7 +24,8 @@ func main() {
 	filename := os.Args[2]
 
 	// Connect to the Master Tracker
-	conn, err := grpc.Dial("localhost:50050", grpc.WithInsecure())
+	serverPort := config.LoadConfig("config.json").Server.Port
+	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", serverPort), grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Could not connect to Master Tracker: %v", err)
 	}
@@ -58,8 +59,10 @@ func uploadFile(client pb.MasterTrackerClient, filename string) {
 		log.Fatalf("Error requesting upload: %v", err)
 	}
 
-	dataKeeperAddr := uploadResp.DataKeeperAddress
+	dataKeeperPort := uploadResp.DataKeeperAddress
+	dataKeeperAddr := "localhost:" + dataKeeperPort // "localhost:" need to parameter read from config file
 	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
+
 
 	// Send file to Data Keeper via TCP
 	utils.SendFile(dataKeeperAddr, filename)

@@ -8,55 +8,9 @@ import (
 	"os"
 	"net"
 	"log"
-	"time"
 
-	pb "dfs/proto"
-	"google.golang.org/grpc"
-	"golang.org/x/net/context"
 	"github.com/go-gota/gota/dataframe"
 )
-
-func StartTCPServer(port string) {
-	address := ":" + port
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		log.Fatalf("Failed to start TCP server: %v", err)
-	}
-	log.Println("Data Keeper is listening on", address)
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Println("Failed to accept connection:", err)
-			continue
-		}
-
-		go handleClient(conn)
-	}
-}
-
-func handleClient(conn net.Conn) {
-	defer conn.Close()
-	reader := bufio.NewReader(conn)
-
-	// Read request type (Upload or Download)
-	requestType, err := reader.ReadString('\n')
-	if err != nil {
-		log.Println("Failed to read request type:", err)
-		return
-	}
-	requestType = strings.TrimSpace(requestType)
-	log.Println("Request type:", requestType)
-
-	// Check if it's an upload or download request
-	if requestType == "UPLOAD" {
-		HandleFileUpload(reader,conn)
-	} else if requestType == "DOWNLOAD" {
-		HandleFileDownload(reader,conn)
-	} else {
-		log.Println("Invalid request type:", requestType)
-	}
-}
 
 func HandleFileUpload(reader *bufio.Reader,conn net.Conn) {
 	defer conn.Close()
@@ -85,6 +39,7 @@ func HandleFileUpload(reader *bufio.Reader,conn net.Conn) {
 
 	fmt.Printf("File %s received and saved successfully!\n", filename)
 }
+
 func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 	defer conn.Close()
 
@@ -125,6 +80,7 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 		log.Println("File sent successfully!")
 	}
 }
+
 func SendFile(address, filename string) {
 	// Open the file
 	file, err := os.Open(filename)
@@ -160,33 +116,6 @@ func SendFile(address, filename string) {
 
 	fmt.Println("Upload complete!")
 }
-
-func StartHeartbeat(id string) {
-	for {
-		SendHeartbeat(id)
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// sendHeartbeat notifies Master Tracker that this Data Keeper is alive
-func SendHeartbeat(id string) {
-	conn, err := grpc.Dial("localhost:50050", grpc.WithInsecure())
-	if err != nil {
-		log.Printf("Could not connect to Master Tracker: %v", err)
-		return
-	}
-	defer conn.Close()
-	client := pb.NewMasterTrackerClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_, err = client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
-	if err != nil {
-		log.Printf("Heartbeat error: %v", err)
-	} else {
-		log.Println("Heartbeat sent successfully")
-	}
-}
-
 
 func PrintDataFrame(df dataframe.DataFrame) {
 	records := df.Records() // Get all rows as [][]string

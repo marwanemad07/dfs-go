@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dfs/utils"
+	"dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
@@ -112,14 +113,14 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 
 // CheckInactiveDataKeepers runs every 1 seconds and marks nodes as down
 func (s *MasterTracker) CheckInactiveDataKeepers() {
-	ticker := time.NewTicker(1 * time.Second) // Run every 1 second
+	heartbeatTimeout := time.Duration(config.LoadConfig("config.json").DataKeeper.HeartbeatTimeout)
+	ticker := time.NewTicker(heartbeatTimeout * time.Second) // Run every 1 second
 	defer ticker.Stop()
 
 	for range ticker.C {
 		s.mu.Lock()
 
 		now := time.Now()
-		heartbeatTimeout := 5 * time.Second // Consider Data Keeper dead after 5 seconds
 
 		for dk, lastHeartbeat := range s.dataKeepersHeartbeat {
 			if now.Sub(lastHeartbeat) > heartbeatTimeout {
@@ -142,7 +143,8 @@ func (s *MasterTracker) CheckInactiveDataKeepers() {
 }
 
 func main() {
-	lis, err := net.Listen("tcp", ":50050")
+	port := config.LoadConfig("config.json").Server.Port
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -157,7 +159,7 @@ func main() {
 	// Start checking for inactive Data Keepers
 	go masterTracker.CheckInactiveDataKeepers()
 
-	log.Println("Master Tracker is running on port 50050 🚀")
+	log.Printf("Master Tracker is running on port %d🚀", port)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
