@@ -123,7 +123,7 @@ func (s *MasterTracker) CheckInactiveDataKeepers() {
 		now := time.Now()
 
 		for dk, lastHeartbeat := range s.dataKeepersHeartbeat {
-			if now.Sub(lastHeartbeat) > heartbeatTimeout {
+			if time.Duration(now.Sub(lastHeartbeat).Seconds()) >= heartbeatTimeout {
 				log.Printf("[WARNING] Data Keeper %s is DOWN! (Last heartbeat: %v)", dk, lastHeartbeat)
 
 				// Remove from aliveDataKeepers

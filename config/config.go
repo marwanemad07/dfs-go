@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"path/filepath"
 )
 
 // Config struct represents the JSON configuration structure
@@ -19,6 +20,7 @@ type Config struct {
 
 // LoadConfig reads and parses the config.json file
 func LoadConfig(filename string) *Config {
+	filename = filepath.Join("config", filename)
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		log.Fatalf("Error reading config file: %v", err)

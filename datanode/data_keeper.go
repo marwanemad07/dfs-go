@@ -82,6 +82,7 @@ func handleClient(conn net.Conn) {
 
 	// Read request type (Upload or Download)
 	requestType, err := reader.ReadString('\n')
+	log.Printf("Request type: %s", requestType)
 	if err != nil {
 		log.Println("Failed to read request type:", err)
 		return

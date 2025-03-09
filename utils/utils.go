@@ -1,13 +1,13 @@
 package utils
 
 import (
-	"fmt"
-	"strings"
 	"bufio"
+	"fmt"
 	"io"
-	"os"
-	"net"
 	"log"
+	"net"
+	"os"
+	"strings"
 
 	"github.com/go-gota/gota/dataframe"
 )
@@ -82,39 +82,47 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 }
 
 func SendFile(address, filename string) {
-	// Open the file
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("Failed to open file: %v", err)
-	}
-	defer file.Close()
+    // Open the file
+    file, err := os.Open(filename)
+    if err != nil {
+        log.Fatalf("Failed to open file: %v", err)
+    }
+    defer file.Close()
 
-	// Connect to Data Keeper over TCP
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		log.Fatalf("Failed to connect to Data Keeper: %v", err)
-	}
-	defer conn.Close()
+    // Connect to Data Keeper over TCP
+    conn, err := net.Dial("tcp", address)
+    if err != nil {
+        log.Fatalf("Failed to connect to Data Keeper: %v", err)
+    }
+    defer conn.Close()
 
-	// Send "UPLOAD" request type
-	_, err = conn.Write([]byte("UPLOAD\n"))
-	if err != nil {
-		log.Fatalf("Failed to send request type: %v", err)
-	}
+    // Create a buffered writer
+    writer := bufio.NewWriter(conn)
 
-	// Send filename first
-	_, err = conn.Write([]byte(filename + "\n"))
-	if err != nil {
-		log.Fatalf("Failed to send filename: %v", err)
-	}
+    // Send "UPLOAD" request type and flush
+    if _, err := writer.WriteString("UPLOAD\n"); err != nil {
+        log.Fatalf("Failed to send request type: %v", err)
+    }
+    // Send filename and flush
+    if _, err := writer.WriteString(filename + "\n"); err != nil {
+        log.Fatalf("Failed to send filename: %v", err)
+    }
 
-	// Send file data
-	_, err = io.Copy(conn, file)
-	if err != nil {
-		log.Fatalf("Failed to send file data: %v", err)
-	}
+    // Flush the header data to ensure it's sent immediately
+    if err := writer.Flush(); err != nil {
+        log.Fatalf("Failed to flush header data: %v", err)
+    }
 
-	fmt.Println("Upload complete!")
+    // Now send file data; you can either use writer or directly use conn
+    if _, err := io.Copy(writer, file); err != nil {
+        log.Fatalf("Failed to send file data: %v", err)
+    }
+    // Flush any remaining data in the buffer
+    if err := writer.Flush(); err != nil {
+        log.Fatalf("Failed to flush file data: %v", err)
+    }
+
+    fmt.Println("Upload complete!")
 }
 
 func PrintDataFrame(df dataframe.DataFrame) {

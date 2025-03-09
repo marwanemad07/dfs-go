@@ -60,7 +60,7 @@ func uploadFile(client pb.MasterTrackerClient, filename string) {
 	}
 
 	dataKeeperPort := uploadResp.DataKeeperAddress
-	dataKeeperAddr := "localhost:" + dataKeeperPort // "localhost:" need to parameter read from config file
+	dataKeeperAddr :=  getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
 	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
 
 
@@ -71,11 +71,16 @@ func uploadFile(client pb.MasterTrackerClient, filename string) {
 // Download logic
 func downloadFile(client pb.MasterTrackerClient, filename string) {
 	fmt.Println("Downloading file:", filename)
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current directory: %v", err)
+	}
+	fullPath := filepath.Join(dir, filename)
 
 	// Request file locations from Master Tracker
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
+	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: fullPath})
 	if err != nil {
 		log.Fatalf("Error requesting download: %v", err)
 	}
@@ -85,9 +90,14 @@ func downloadFile(client pb.MasterTrackerClient, filename string) {
 	}
 
 	// Select the first available Data Keeper
-	dataKeeperAddr := downloadResp.DataKeeperAddresses[0]
+	dataKeeperPort := downloadResp.DataKeeperAddresses[0]
+	dataKeeperAddr :=  getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
 	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddr)
 
 	// Request and receive file via TCP
 	utils.ReceiveFile(dataKeeperAddr, filename)
+}
+
+func getAddress(port string) string {
+	return "localhost:" + port
 }
