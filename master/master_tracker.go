@@ -68,13 +68,15 @@ func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadReq
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Filter file table to get all Data Keepers storing the requested file
 	filtered := s.fileTable.Filter(
 		dataframe.F{Colname: "filename", Comparator: "==", Comparando: req.Filename},
+		dataframe.F{Colname: "is_alive", Comparator: "==", Comparando: "true"}, // Ensure Data Keeper is alive
 	)
 
 	if filtered.Nrow() == 0 {
-		log.Printf("[ERROR] File %s not found!", req.Filename)
-		return nil, fmt.Errorf("file %s not found", req.Filename)
+		log.Printf("[ERROR] File %s not found or no active Data Keeper!", req.Filename)
+		return nil, fmt.Errorf("file %s not found or no active Data Keeper", req.Filename)
 	}
 
 	dataKeepers := filtered.Col("data_keeper").Records()

@@ -21,7 +21,7 @@ func StartTCPServer(address string) {
 	if err != nil {
 		log.Fatalf("Failed to start TCP server: %v", err)
 	}
-	log.Println("Data Keeper is listening for file uploads on", address)
+	log.Println("Data Keeper is listening on", address)
 
 	for {
 		conn, err := listener.Accept()
@@ -29,21 +29,43 @@ func StartTCPServer(address string) {
 			log.Println("Failed to accept connection:", err)
 			continue
 		}
-		go HandleFileUpload(conn)
+
+		go handleClient(conn)
 	}
 }
 
-func HandleFileUpload(conn net.Conn) {
+func handleClient(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	// Read request type (Upload or Download)
+	requestType, err := reader.ReadString('\n')
+	if err != nil {
+		log.Println("Failed to read request type:", err)
+		return
+	}
+	requestType = strings.TrimSpace(requestType)
+	log.Println("Request type:", requestType)
+
+	// Check if it's an upload or download request
+	if requestType == "UPLOAD" {
+		HandleFileUpload(reader,conn)
+	} else if requestType == "DOWNLOAD" {
+		HandleFileDownload(reader,conn)
+	} else {
+		log.Println("Invalid request type:", requestType)
+	}
+}
+
+func HandleFileUpload(reader *bufio.Reader,conn net.Conn) {
 	defer conn.Close()
 
-	// Read filename from client
-	reader := bufio.NewReader(conn)
 	filename, err := reader.ReadString('\n')
 	if err != nil {
 		log.Println("Failed to read filename:", err)
 		return
 	}
-	filename = filename[:len(filename)-1] // Remove newline character
+	filename = strings.TrimSpace(filename)
 
 	// Create the file
 	file, err := os.Create("storage/" + filename)
@@ -62,7 +84,46 @@ func HandleFileUpload(conn net.Conn) {
 
 	fmt.Printf("File %s received and saved successfully!\n", filename)
 }
+func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
+	defer conn.Close()
 
+	// Read requested filename
+	filename, err := reader.ReadString('\n')
+	if err != nil {
+		log.Println("Failed to read requested filename:", err)
+		return
+	}
+	filename = strings.TrimSpace(filename)
+
+	// Open the file for reading
+	filePath := "storage/" + filename
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("File not found: %s\n", filename)
+		conn.Write([]byte("ERROR: File not found\n")) // Notify client
+		return
+	}
+	defer file.Close()
+
+	log.Println("Sending file:", filename)
+
+	// Send confirmation to the client before sending data
+	writer := bufio.NewWriter(conn)
+	_, err = writer.WriteString("OK\n")
+	if err != nil {
+		log.Println("Failed to send response:", err)
+		return
+	}
+	writer.Flush()
+
+	// Send file data
+	_, err = io.Copy(conn, file)
+	if err != nil {
+		log.Println("Error sending file:", err)
+	} else {
+		log.Println("File sent successfully!")
+	}
+}
 func SendFile(address, filename string) {
 	// Open the file
 	file, err := os.Open(filename)
@@ -77,6 +138,12 @@ func SendFile(address, filename string) {
 		log.Fatalf("Failed to connect to Data Keeper: %v", err)
 	}
 	defer conn.Close()
+
+	// Send "UPLOAD" request type
+	_, err = conn.Write([]byte("UPLOAD\n"))
+	if err != nil {
+		log.Fatalf("Failed to send request type: %v", err)
+	}
 
 	// Send filename first
 	_, err = conn.Write([]byte(filename + "\n"))
@@ -138,4 +205,54 @@ func PrintDataFrame(df dataframe.DataFrame) {
 		fmt.Printf("| %-40s | %-20s | %-30s | %-10s |\n", row[0], row[1], row[2], row[3])
 	}
 	fmt.Println(strings.Repeat("-", 110))
+}
+
+func ReceiveFile(address, filename string) {
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		log.Printf("Failed to connect to Data Keeper: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Send "DOWNLOAD" request
+	_, err = conn.Write([]byte("DOWNLOAD\n"))
+	if err != nil {
+		log.Fatalf("Failed to send request type: %v", err)
+	}
+
+	// Send filename
+	_, err = conn.Write([]byte(filename + "\n"))
+	if err != nil {
+		log.Fatalf("Failed to send filename: %v", err)
+	}
+
+	// Wait for server response
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatalf("Failed to read response: %v", err)
+	}
+
+	if strings.HasPrefix(response, "ERROR") {
+		log.Printf("Server error: %s", response)
+		return
+	}
+
+	// Create the file
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Printf("Failed to create file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Receive file data
+	_, err = io.Copy(file, conn)
+	if err != nil {
+		log.Printf("Error receiving file: %v", err)
+		return
+	}
+
+	log.Println("File received successfully.")
 }
