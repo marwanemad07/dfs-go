@@ -1,16 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
-
 	"dfs/config"
 	pb "dfs/proto"
-	"dfs/utils"
 	"google.golang.org/grpc"
 )
 
@@ -65,7 +67,7 @@ func uploadFile(client pb.MasterTrackerClient, filename string) {
 
 
 	// Send file to Data Keeper via TCP
-	utils.SendFile(dataKeeperAddr, filename)
+	SendFile(dataKeeperAddr, filename)
 }
 
 // Download logic
@@ -95,9 +97,109 @@ func downloadFile(client pb.MasterTrackerClient, filename string) {
 	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddr)
 
 	// Request and receive file via TCP
-	utils.ReceiveFile(dataKeeperAddr, filename)
+	ReceiveFile(dataKeeperAddr, filename)
 }
 
 func getAddress(port string) string {
 	return "localhost:" + port
+}
+
+
+
+// SendFile uploads a file to the server
+func SendFile(address, filename string) {
+	// Open the file
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("Failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	// Connect to Data Keeper
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		log.Fatalf("Failed to connect to Data Keeper: %v", err)
+	}
+	defer conn.Close()
+
+	// Send request header
+	if err := sendRequest(conn, "UPLOAD", filename); err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	// Send file data
+	writer := bufio.NewWriter(conn)
+	if _, err := io.Copy(writer, file); err != nil {
+		log.Fatalf("Failed to send file data: %v", err)
+	}
+
+	// Ensure all data is sent
+	if err := writer.Flush(); err != nil {
+		log.Fatalf("Failed to flush file data: %v", err)
+	}
+
+	log.Println("Upload complete!")
+}
+
+// ReceiveFile downloads a file from the server
+func ReceiveFile(address, filename string) {
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		log.Fatalf("Failed to connect to Data Keeper: %v", err)
+	}
+	defer conn.Close()
+
+	// Send request header
+	if err := sendRequest(conn, "DOWNLOAD", filename); err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	// Read server response
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatalf("Failed to read server response: %v", err)
+	}
+
+	// Check if the server returned an error
+	if strings.HasPrefix(response, "ERROR") {
+		log.Printf("Server error: %s", response)
+		return
+	}
+
+	// Create the file
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Fatalf("Failed to create file: %v", err)
+	}
+	defer file.Close()
+
+	// Receive and save file data
+	if _, err := io.Copy(file, conn); err != nil {
+		log.Fatalf("Error receiving file: %v", err)
+	}
+
+	log.Println("File received successfully.")
+}
+
+// sendRequest sends a request type and filename to the server
+func sendRequest(conn net.Conn, requestType, filename string) error {
+	writer := bufio.NewWriter(conn)
+
+	// Send request type
+	if _, err := writer.WriteString(requestType + "\n"); err != nil {
+		return fmt.Errorf("failed to send request type: %w", err)
+	}
+
+	// Send filename
+	if _, err := writer.WriteString(filename + "\n"); err != nil {
+		return fmt.Errorf("failed to send filename: %w", err)
+	}
+
+	// Flush data
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush request data: %w", err)
+	}
+
+	return nil
 }

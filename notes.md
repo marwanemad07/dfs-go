@@ -4,8 +4,7 @@
 2. Unique File names on the same datanode
 3. Replicates
 4. Client download
-5. Create config file
-6. Use addresses of devices instead of using localhost:port, See `getAddress()` for more info
+5. Use addresses of devices instead of using localhost:port, See `getAddress()` for more info
 
 
 ### Enhancements

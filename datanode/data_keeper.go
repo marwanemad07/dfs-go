@@ -4,20 +4,19 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"strings"
 	"time"
-
 	pb "dfs/proto"
-	"dfs/utils"
 	"google.golang.org/grpc"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <arg1> <arg2>")
+		fmt.Println("Usage: go run main.go <arg1> ")
 		return
 	}
 
@@ -64,20 +63,19 @@ func sendHeartbeat(id string) {
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return
 	}
-	defer conn.Close()
 	client := pb.NewMasterTrackerClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 	_, err = client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
 	if err != nil {
 		log.Printf("Heartbeat error: %v", err)
-	} else {
-		log.Println("Heartbeat sent successfully")
-	}
+		} else {
+			log.Println("Heartbeat sent successfully")
+		}
+	defer conn.Close()
+	defer cancel()
 }
 
 func handleClient(conn net.Conn) {
-	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
 	// Read request type (Upload or Download)
@@ -92,10 +90,94 @@ func handleClient(conn net.Conn) {
 
 	// Check if it's an upload or download request
 	if requestType == "UPLOAD" {
-		utils.HandleFileUpload(reader,conn)
+		HandleFileUpload(reader,conn)
 	} else if requestType == "DOWNLOAD" {
-		utils.HandleFileDownload(reader,conn)
+		HandleFileDownload(reader,conn)
 	} else {
 		log.Println("Invalid request type:", requestType)
 	}
+	defer conn.Close()
+
+}
+
+// HandleFileUpload processes file uploads from the client
+func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
+
+	filename, err := readFilename(reader)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	filePath := "storage/" + filename
+	file, err := os.Create(filePath)
+	if err != nil {
+		log.Printf("Failed to create file %s: %v\n", filePath, err)
+		return
+	}
+	defer file.Close()
+
+	if _, err = io.Copy(file, conn); err != nil {
+		log.Printf("Failed to save file %s: %v\n", filePath, err)
+		return
+	}
+
+	log.Printf("File %s received and saved successfully!\n", filename)
+	defer conn.Close()
+
+}
+
+// HandleFileDownload processes file download requests
+func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
+
+	filename, err := readFilename(reader)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	filePath := "storage/" + filename
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("File not found: %s\n", filename)
+		sendResponse(conn, "ERROR: File not found")
+		return
+	}
+
+	log.Printf("Sending file: %s\n", filename)
+
+	// Notify client before sending file data
+	if err := sendResponse(conn, "OK"); err != nil {
+		log.Println(err)
+		return
+	}
+
+	// Send file data
+	if _, err = io.Copy(conn, file); err != nil {
+		log.Printf("Error sending file %s: %v\n", filename, err)
+	} else {
+		log.Println("File sent successfully!")
+	}
+
+	defer conn.Close()
+	defer file.Close()
+}
+
+// readFilename reads and trims the filename from the connection
+func readFilename(reader *bufio.Reader) (string, error) {
+	filename, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read filename: %w", err)
+	}
+	return strings.TrimSpace(filename), nil
+}
+
+// sendResponse writes a message to the connection and flushes it
+func sendResponse(conn net.Conn, message string) error {
+	writer := bufio.NewWriter(conn)
+	_, err := writer.WriteString(message + "\n")
+	if err != nil {
+		return fmt.Errorf("failed to send response: %w", err)
+	}
+	return writer.Flush()
 }
