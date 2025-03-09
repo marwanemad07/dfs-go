@@ -16,7 +16,8 @@ import (
 	"github.com/go-gota/gota/dataframe"
 )
 
-func StartTCPServer(address string) {
+func StartTCPServer(port string) {
+	address := ":" + port
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("Failed to start TCP server: %v", err)
@@ -93,9 +94,9 @@ func SendFile(address, filename string) {
 	fmt.Println("Upload complete!")
 }
 
-func StartHeartbeat() {
+func StartHeartbeat(id string) {
 	for {
-		SendHeartbeat("DataKeeper-1")
+		SendHeartbeat(id)
 		time.Sleep(1 * time.Second)
 	}
 }

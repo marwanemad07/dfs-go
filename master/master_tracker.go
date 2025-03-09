@@ -5,6 +5,7 @@ import (
 	pb "dfs/proto"
 	"fmt"
 	"log"
+	//"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -18,9 +19,10 @@ import (
 // MasterTracker struct manages file storage using gota DataFrame
 type MasterTracker struct {
 	pb.UnimplementedMasterTrackerServer
-	mu          sync.Mutex
-	fileTable   dataframe.DataFrame
-	dataKeepers map[string]time.Time // Tracks the last heartbeat timestamp
+	mu               sync.Mutex
+	fileTable        dataframe.DataFrame
+	dataKeepersHeartbeat      map[string]time.Time // Tracks last heartbeat timestamp
+	dataKeepers map[string]bool      // Tracks only alive data keepers
 }
 
 // NewMasterTracker initializes the Master Tracker
@@ -32,35 +34,45 @@ func NewMasterTracker() *MasterTracker {
 		series.New([]string{}, series.String, "file_path"),
 		series.New([]string{}, series.String, "is_alive"),
 	)
-	
 
 	return &MasterTracker{
 		fileTable:   df,
-		dataKeepers: make(map[string]time.Time),
+		dataKeepersHeartbeat: make(map[string]time.Time),
+		dataKeepers: make(map[string]bool),
 	}
 }
-
 
 // RequestUpload assigns a Data Keeper for file upload and updates DataFrame
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dataKeeper := "localhost:50051" // pick a random datakeeper
+	// Ensure we have at least one alive Data Keeper
+	if len(s.dataKeepers) == 0 {
+		return nil, fmt.Errorf("no available data keepers for upload")
+	}
+
+	// Select the first alive Data Keeper
+	var selectedDataKeeper string
+	for dk := range s.dataKeepers {
+		selectedDataKeeper = dk
+		break
+	}
+
 	filePath := fmt.Sprintf("/storage/%s", req.Filename)
 
 	// Append to DataFrame
 	newRow := dataframe.New(
 		series.New([]string{req.Filename}, series.String, "filename"),
-		series.New([]string{dataKeeper}, series.String, "data_keeper"),
+		series.New([]string{selectedDataKeeper}, series.String, "data_keeper"),
 		series.New([]string{filePath}, series.String, "file_path"),
 		series.New([]string{"true"}, series.String, "is_alive"),
 	)
 	s.fileTable = s.fileTable.RBind(newRow)
 
-	log.Printf("[UPLOAD] File: %s assigned to Data Keeper: %s", req.Filename, dataKeeper)
+	log.Printf("[UPLOAD] File: %s assigned to Data Keeper: %s", req.Filename, selectedDataKeeper)
 	utils.PrintDataFrame(s.fileTable)
-	return &pb.UploadResponse{DataKeeperAddress: dataKeeper}, nil
+	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeper}, nil
 }
 
 // RequestDownload returns all Data Keepers that store the requested file
@@ -86,26 +98,35 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.dataKeepers[req.DataKeeperId] = time.Now()
+	// Update last heartbeat timestamp
+	s.dataKeepersHeartbeat[req.DataKeeperId] = time.Now()
 
-	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperId, s.dataKeepers[req.DataKeeperId])
+	// Mark Data Keeper as alive
+	s.dataKeepers[req.DataKeeperId] = true
+
+	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperId, s.dataKeepersHeartbeat[req.DataKeeperId])
 	return &pb.HeartbeatResponse{Success: true}, nil
 }
+
 // CheckInactiveDataKeepers runs every 1 seconds and marks nodes as down
 func (s *MasterTracker) CheckInactiveDataKeepers() {
-	ticker := time.NewTicker(1 * time.Second) // Run every 1 seconds
+	ticker := time.NewTicker(1 * time.Second) // Run every 1 second
 	defer ticker.Stop()
 
 	for range ticker.C {
 		s.mu.Lock()
 
 		now := time.Now()
+		heartbeatTimeout := 5 * time.Second // Consider Data Keeper dead after 5 seconds
 
-		for dk, lastHeartbeat := range s.dataKeepers {
-			if now.Sub(lastHeartbeat) > 1*time.Second { // If last heartbeat was more than 1 sec ago
+		for dk, lastHeartbeat := range s.dataKeepersHeartbeat {
+			if now.Sub(lastHeartbeat) > heartbeatTimeout {
 				log.Printf("[WARNING] Data Keeper %s is DOWN! (Last heartbeat: %v)", dk, lastHeartbeat)
 
-				// Update "is_alive" column to "false" for this Data Keeper
+				// Remove from aliveDataKeepers
+				delete(s.dataKeepers, dk)
+
+				// Update "is_alive" column in fileTable to "false" for this Data Keeper
 				for i := 0; i < s.fileTable.Nrow(); i++ {
 					if s.fileTable.Elem(i, 1).String() == dk { // Column 1 = "data_keeper"
 						s.fileTable.Elem(i, 3).Set("false") // Column 3 = "is_alive"
@@ -117,6 +138,7 @@ func (s *MasterTracker) CheckInactiveDataKeepers() {
 		s.mu.Unlock()
 	}
 }
+
 func main() {
 	lis, err := net.Listen("tcp", ":50050")
 	if err != nil {
