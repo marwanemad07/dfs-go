@@ -205,3 +205,105 @@ var MasterTracker_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "dfs.proto",
 }
+
+const (
+	DataKeeper_ReplicateFile_FullMethodName = "/dfs.DataKeeper/ReplicateFile"
+)
+
+// DataKeeperClient is the client API for DataKeeper service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type DataKeeperClient interface {
+	ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error)
+}
+
+type dataKeeperClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewDataKeeperClient(cc grpc.ClientConnInterface) DataKeeperClient {
+	return &dataKeeperClient{cc}
+}
+
+func (c *dataKeeperClient) ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicationResponse)
+	err := c.cc.Invoke(ctx, DataKeeper_ReplicateFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DataKeeperServer is the server API for DataKeeper service.
+// All implementations must embed UnimplementedDataKeeperServer
+// for forward compatibility.
+type DataKeeperServer interface {
+	ReplicateFile(context.Context, *ReplicationRequest) (*ReplicationResponse, error)
+	mustEmbedUnimplementedDataKeeperServer()
+}
+
+// UnimplementedDataKeeperServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedDataKeeperServer struct{}
+
+func (UnimplementedDataKeeperServer) ReplicateFile(context.Context, *ReplicationRequest) (*ReplicationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReplicateFile not implemented")
+}
+func (UnimplementedDataKeeperServer) mustEmbedUnimplementedDataKeeperServer() {}
+func (UnimplementedDataKeeperServer) testEmbeddedByValue()                    {}
+
+// UnsafeDataKeeperServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DataKeeperServer will
+// result in compilation errors.
+type UnsafeDataKeeperServer interface {
+	mustEmbedUnimplementedDataKeeperServer()
+}
+
+func RegisterDataKeeperServer(s grpc.ServiceRegistrar, srv DataKeeperServer) {
+	// If the following call pancis, it indicates UnimplementedDataKeeperServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&DataKeeper_ServiceDesc, srv)
+}
+
+func _DataKeeper_ReplicateFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DataKeeperServer).ReplicateFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DataKeeper_ReplicateFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DataKeeperServer).ReplicateFile(ctx, req.(*ReplicationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// DataKeeper_ServiceDesc is the grpc.ServiceDesc for DataKeeper service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var DataKeeper_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "dfs.DataKeeper",
+	HandlerType: (*DataKeeperServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ReplicateFile",
+			Handler:    _DataKeeper_ReplicateFile_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "dfs.proto",
+}

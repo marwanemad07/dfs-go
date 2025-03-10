@@ -13,6 +13,18 @@ service MasterTracker {
   // Data Keeper sends a heartbeat to indicate it is alive.
   rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
+service DataKeeper {
+  rpc ReplicateFile(ReplicationRequest) returns (ReplicationResponse);
+}
+
+message ReplicationRequest {
+  string filename = 1;
+  string destinationAddress = 2;
+}
+
+message ReplicationResponse {
+  bool success = 1;
+}
 // schemas for file upload/download and heartbeat.
 // Message definitions for file upload/download.
 message UploadRequest {
