@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
 type DataKeeperServer struct {
 	pb.UnimplementedDataKeeperServer
 }
@@ -72,7 +73,7 @@ func startHeartbeat(id string) {
 	// send heartbeat every second till process stops
 	for {
 		sendHeartbeat(client, id)
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 }
 

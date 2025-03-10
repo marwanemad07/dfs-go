@@ -14,3 +14,9 @@
 ### Bugs
 
 1. `if time.Duration(now.Sub(lastHeartbeat).Seconds()) >= heartbeatTimeout` this line in master_tracker make the master know that the datanode is dawn after two seconds not one
+
+### Atef tasks:
+- filename & filepath
+- images
+- checksum
+- address & port
