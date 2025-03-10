@@ -15,7 +15,12 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
+
+type DataKeeperServer struct {
+	pb.UnimplementedDataKeeperServer
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -67,30 +72,43 @@ func startTCPServer(port string) {
 	}
 }
 
+// create the gRPC connection and start sending heartbeat
 func startHeartbeat(id string) {
-	for {
-		sendHeartbeat(id)
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// sendHeartbeat notifies Master Tracker that this Data Keeper is alive
-func sendHeartbeat(id string) {
-	conn, err := grpc.Dial("localhost:50050", grpc.WithInsecure())
+	// create connection
+	conn, err := grpc.Dial("localhost:50050", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return
 	}
+
+	// free resources
+	defer conn.Close()
+
+	// create gRPC client
 	client := pb.NewMasterTrackerClient(conn)
+
+	// send heartbeat every second till process stops
+	for {
+		sendHeartbeat(client, id)
+		time.Sleep(1 * time.Second)
+	}
+}
+
+// notify master that this data node is alive
+func sendHeartbeat(client pb.MasterTrackerClient, id string) {
+	// context with 1 second timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	_, err = client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
+
+	// free resources
+	defer cancel()
+
+	// send heartbeat message
+	_, err := client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
 	if err != nil {
 		log.Printf("Heartbeat error: %v", err)
 	} else {
 		log.Println("Heartbeat sent successfully")
 	}
-	defer conn.Close()
-	defer cancel()
 }
 
 func handleClient(conn net.Conn) {
@@ -247,9 +265,6 @@ func sendResponse(conn net.Conn, message string) error {
 	return writer.Flush()
 }
 
-type DataKeeperServer struct {
-	pb.UnimplementedDataKeeperServer
-}
 
 func (s *DataKeeperServer) StartReplication(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
 	log.Printf("[Replication] Starting replication of %s to %s", req.Filename, req.DestinationAddress)

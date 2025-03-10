@@ -7,28 +7,35 @@ import (
 	"dfs/utils"
 	"fmt"
 	"log"
+	"strings"
+
+	//"math/rand"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
+	// "dfs/utils"
+	// "dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
 )
 
-// MasterTracker struct manages file storage using gota DataFrame
 type MasterTracker struct {
 	pb.UnimplementedMasterTrackerServer
-	mu               sync.Mutex
-	fileTable        dataframe.DataFrame
-	dataKeepersHeartbeat      map[string]time.Time // Tracks last heartbeat timestamp
-	dataKeepers map[string]bool      // Tracks only alive data keepers
+	mu                   sync.Mutex
+	fileTable            dataframe.DataFrame
+	dataKeepersHeartbeat map[string]time.Time   // Tracks last heartbeat timestamp
+	dataKeepers          map[string]bool        // Tracks alive data keepers
+	nodeTimers           map[string]*time.Timer // Per-node timers
+	heartbeatTimeout     time.Duration          // Configured heartbeat timeout
 }
 
-// NewMasterTracker initializes the Master Tracker
 func NewMasterTracker() *MasterTracker {
-	// Create an empty DataFrame with defined columns
+	cfg := config.LoadConfig("config.json")
+	heartbeatTimeout := time.Duration(cfg.DataKeeper.HeartbeatTimeout) * time.Second
+
 	df := dataframe.New(
 		series.New([]string{}, series.String, "filename"),
 		series.New([]string{}, series.String, "data_keeper"),
@@ -37,16 +44,22 @@ func NewMasterTracker() *MasterTracker {
 	)
 
 	return &MasterTracker{
-		fileTable:   df,
+		fileTable:            df,
 		dataKeepersHeartbeat: make(map[string]time.Time),
-		dataKeepers: make(map[string]bool),
+		dataKeepers:          make(map[string]bool),
+		nodeTimers:           make(map[string]*time.Timer),
+		heartbeatTimeout:     heartbeatTimeout,
 	}
 }
 
-// RequestUpload assigns a Data Keeper for file upload and updates DataFrame
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Ensure only MP4 files are allowed
+	if !strings.HasSuffix(strings.ToLower(req.Filename), ".mp4") {
+		return nil, fmt.Errorf("only MP4 files are allowed for upload")
+	}
 
 	// Ensure we have at least one alive Data Keeper
 	if len(s.dataKeepers) == 0 {
@@ -76,6 +89,7 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeper}, nil
 }
 
+
 // RequestDownload returns all Data Keepers that store the requested file
 func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadRequest) (*pb.DownloadResponse, error) {
 	s.mu.Lock()
@@ -96,50 +110,64 @@ func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadReq
 	return &pb.DownloadResponse{DataKeeperAddresses: dataKeepers}, nil
 }
 
-// SendHeartbeat updates the Data Keeper status
+// marks the given Data Keeper as down if its last heartbeat is older than the timeout.
+func (s *MasterTracker) markDataKeeperDown(dk string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lastHeartbeat, exists := s.dataKeepersHeartbeat[dk]
+	if !exists {
+		return
+	}
+
+	// Check if the elapsed time is less than the timeout.
+	if time.Since(lastHeartbeat) < s.heartbeatTimeout {
+		return
+	}
+
+	log.Printf("[WARNING] Data Keeper %s is DOWN! (Last heartbeat: %v)", dk, lastHeartbeat)
+
+	// Remove the Data Keeper from the alive list.
+	delete(s.dataKeepers, dk)
+
+	// Update "is_alive" column in fileTable to "false" for this Data Keeper.
+	for i := 0; i < s.fileTable.Nrow(); i++ {
+		if s.fileTable.Elem(i, 1).String() == dk { // Column 1 = "data_keeper"
+			s.fileTable.Elem(i, 3).Set("false") // Column 3 = "is_alive"
+		}
+	}
+
+	// Remove and stop the timer for this Data Keeper.
+	if timer, exists := s.nodeTimers[dk]; exists {
+		timer.Stop()
+		delete(s.nodeTimers, dk)
+	}
+}
+
+// updates the Data Keeper status and resets its timer.
 func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update last heartbeat timestamp
-	s.dataKeepersHeartbeat[req.DataKeeperId] = time.Now()
-
-	// Mark Data Keeper as alive
+	now := time.Now()
+	s.dataKeepersHeartbeat[req.DataKeeperId] = now
 	s.dataKeepers[req.DataKeeperId] = true
 
-	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperId, s.dataKeepersHeartbeat[req.DataKeeperId])
-	return &pb.HeartbeatResponse{Success: true}, nil
-}
-
-// CheckInactiveDataKeepers runs every 1 seconds and marks nodes as down
-func (s *MasterTracker) CheckInactiveDataKeepers() {
-	heartbeatTimeout := time.Duration(config.LoadConfig("config.json").DataKeeper.HeartbeatTimeout)
-	ticker := time.NewTicker(heartbeatTimeout * time.Second) // Run every 1 second
-	defer ticker.Stop()
-
-	for range ticker.C {
-		s.mu.Lock()
-
-		now := time.Now()
-
-		for dk, lastHeartbeat := range s.dataKeepersHeartbeat {
-			if time.Duration(now.Sub(lastHeartbeat).Seconds()) >= heartbeatTimeout {
-				log.Printf("[WARNING] Data Keeper %s is DOWN! (Last heartbeat: %v)", dk, lastHeartbeat)
-
-				// Remove from aliveDataKeepers
-				delete(s.dataKeepers, dk)
-
-				// Update "is_alive" column in fileTable to "false" for this Data Keeper
-				for i := 0; i < s.fileTable.Nrow(); i++ {
-					if s.fileTable.Elem(i, 1).String() == dk { // Column 1 = "data_keeper"
-						s.fileTable.Elem(i, 3).Set("false") // Column 3 = "is_alive"
-					}
-				}
-			}
-		}
-
-		s.mu.Unlock()
+	// Stop any existing timer for this Data Keeper.
+	if timer, exists := s.nodeTimers[req.DataKeeperId]; exists {
+		timer.Stop()
 	}
+
+	// Define a small buffer (e.g., 100ms) to account for jitter.
+	buffer := 100 * time.Millisecond
+
+	// Reset the timer for this Data Keeper to fire after the heartbeat timeout plus the buffer.
+	s.nodeTimers[req.DataKeeperId] = time.AfterFunc(s.heartbeatTimeout+buffer, func() {
+		s.markDataKeeperDown(req.DataKeeperId)
+	})
+
+	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperId, now)
+	return &pb.HeartbeatResponse{Success: true}, nil
 }
 
 func (s *MasterTracker) ReplicationCheck() {
@@ -248,11 +276,6 @@ func main() {
 	// Register it with the gRPC server
 	grpcServer := grpc.NewServer()
 	pb.RegisterMasterTrackerServer(grpcServer, masterTracker)
-
-	// Start checking for inactive Data Keepers
-	go masterTracker.CheckInactiveDataKeepers()
-	go masterTracker.ReplicationCheck()
-
 
 	log.Printf("Master Tracker is running on port %d🚀", port)
 	if err := grpcServer.Serve(lis); err != nil {
