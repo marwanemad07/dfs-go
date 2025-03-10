@@ -23,19 +23,31 @@ type DataKeeperServer struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <arg1> ")
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: go run main.go <master_address_type> <node_port> ")
 		return
 	}
 
 	// Start TCP Server for receiving files
-	port := os.Args[1]
-	go startTCPServer(port)
+	masterAddress := ""
+	dataNodePort := os.Args[2]
+
+	switch os.Args[1] {
+	case "local":
+		masterAddress = "localhost"
+	case "docker":
+		masterAddress = "host.docker.internal"
+	default:
+		fmt.Println("Invalid mode. Use 'local' or 'docker'.")
+		os.Exit(1)
+	}
+
+	go startTCPServer(dataNodePort)
 
 	// Start gRPC heartbeat mechanism
-	go startHeartbeat(port)
+	go startHeartbeat(masterAddress, dataNodePort)
 
-	tcpPort := os.Args[1]
+	tcpPort := os.Args[2]
 	tcpPortInt, err := strconv.Atoi(tcpPort)
 	if err != nil {
 		log.Fatalf("Invalid TCP port: %v", err)
@@ -73,9 +85,9 @@ func startTCPServer(port string) {
 }
 
 // create the gRPC connection and start sending heartbeat
-func startHeartbeat(id string) {
+func startHeartbeat(masterAddress string, id string) {
 	// create connection
-	conn, err := grpc.Dial("localhost:50050", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(masterAddress+":50050", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return
@@ -146,7 +158,7 @@ func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
 	}
 	filePath := filename
 
-	if len(filename) < 30  {
+	if len(filename) < 30 {
 		filePath = "storage/" + filename
 	}
 	file, err := os.Create(filePath)
@@ -206,7 +218,7 @@ func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.Replicatio
 	log.Printf("[DATA KEEPER] Replicating file %s to %s", req.Filename, req.DestinationAddress)
 	filename := req.Filename
 	destinationAddress := req.DestinationAddress
-	filePath := filename 
+	filePath := filename
 	log.Printf("[DATA KEEPER] Replicating file %s to %s", filename, destinationAddress)
 
 	// Check if the file exists.
@@ -226,7 +238,7 @@ func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.Replicatio
 	// Notify the destination about the upcoming file upload.
 	writer := bufio.NewWriter(conn)
 	writer.WriteString("UPLOAD\n")
-	writer.WriteString(filename+ strconv.Itoa(rand.Intn(1000)) + "\n")
+	writer.WriteString(filename + strconv.Itoa(rand.Intn(1000)) + "\n")
 	writer.Flush()
 
 	// Send the file.
@@ -264,7 +276,6 @@ func sendResponse(conn net.Conn, message string) error {
 	}
 	return writer.Flush()
 }
-
 
 func (s *DataKeeperServer) StartReplication(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
 	log.Printf("[Replication] Starting replication of %s to %s", req.Filename, req.DestinationAddress)
