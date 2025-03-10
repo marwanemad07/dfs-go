@@ -24,8 +24,6 @@ WORKDIR /app
 # Copy compiled binary from builder stage
 COPY --from=builder /app/datanode_app .
 
-# Expose the required port
-EXPOSE 5050
+ENTRYPOINT ["./datanode_app", "docker"]
+CMD ["5050"]
 
-# Run the compiled binary
-CMD ["./datanode_app", "docker", "5050"]
