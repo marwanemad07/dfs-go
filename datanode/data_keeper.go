@@ -13,6 +13,9 @@ import (
 	pb "dfs/proto"
 	"google.golang.org/grpc"
 )
+type DataKeeperServer struct {
+	pb.UnimplementedDataKeeperServer
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -162,6 +165,49 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 	defer conn.Close()
 	defer file.Close()
 }
+
+func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
+	filename := req.Filename
+	destinationAddress := req.DestinationAddress
+
+	// Check if the file exists
+	filePath := fmt.Sprintf("storage/%s", filename)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("[REPLICATION ERROR] File %s not found for replication", filename)
+		return &pb.ReplicationResponse{Success: false}, err
+	}
+
+	// Open connection to destination Data Keeper
+	conn, err := net.Dial("tcp", destinationAddress)
+	if err != nil {
+		log.Printf("[REPLICATION ERROR] Cannot connect to destination %s: %v", destinationAddress, err)
+		return &pb.ReplicationResponse{Success: false}, err
+	}
+	defer conn.Close()
+
+	// Notify destination
+	writer := bufio.NewWriter(conn)
+	writer.WriteString("UPLOAD\n")
+	writer.WriteString(filename + "\n")
+	writer.Flush()
+
+	// Send file
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("[REPLICATION ERROR] Cannot open file %s: %v", filename, err)
+		return &pb.ReplicationResponse{Success: false}, err
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(conn, file); err != nil {
+		log.Printf("[REPLICATION ERROR] Failed to send file: %v", err)
+		return &pb.ReplicationResponse{Success: false}, err
+	}
+
+	log.Printf("[REPLICATION SUCCESS] File %s replicated to %s", filename, destinationAddress)
+	return &pb.ReplicationResponse{Success: true}, nil
+}
+
 
 // readFilename reads and trims the filename from the connection
 func readFilename(reader *bufio.Reader) (string, error) {
