@@ -1,2 +1,4 @@
 *.exe
 storage/*
+*.mp4
+!example.mp4

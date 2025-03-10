@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"dfs/config"
+	pb "dfs/proto"
 	"fmt"
 	"io"
 	"log"
@@ -11,8 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"dfs/config"
-	pb "dfs/proto"
+
 	"google.golang.org/grpc"
 )
 
@@ -47,6 +48,12 @@ func main() {
 // Upload logic
 func uploadFile(master pb.MasterTrackerClient, filename string) {
 	fmt.Println("Uploading file:", filename)
+
+	// Ensure only MP4 files are allowed
+	if !strings.HasSuffix(strings.ToLower(filename), ".mp4") {
+		log.Fatalf("Only MP4 files are allowed for upload")
+	}
+
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("Failed to get current directory: %v", err)
@@ -62,9 +69,8 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 	}
 
 	dataKeeperPort := uploadResp.DataKeeperAddress
-	dataKeeperAddr :=  getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
+	dataKeeperAddr := getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
 	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
-
 
 	// Send file to Data Keeper via TCP
 	SendFile(dataKeeperAddr, filename)
@@ -93,7 +99,7 @@ func downloadFile(client pb.MasterTrackerClient, filename string) {
 
 	// Select the first available Data Keeper
 	dataKeeperPort := downloadResp.DataKeeperAddresses[0]
-	dataKeeperAddr :=  getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
+	dataKeeperAddr := getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
 	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddr)
 
 	// Request and receive file via TCP
@@ -103,8 +109,6 @@ func downloadFile(client pb.MasterTrackerClient, filename string) {
 func getAddress(port string) string {
 	return "localhost:" + port
 }
-
-
 
 // SendFile uploads a file to the server
 func SendFile(address, filename string) {

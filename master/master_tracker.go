@@ -7,6 +7,8 @@ import (
 	"dfs/utils"
 	"fmt"
 	"log"
+	"strings"
+
 	//"math/rand"
 	"net"
 	"strconv"
@@ -50,10 +52,14 @@ func NewMasterTracker() *MasterTracker {
 	}
 }
 
-// RequestUpload assigns a Data Keeper for file upload and updates DataFrame
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Ensure only MP4 files are allowed
+	if !strings.HasSuffix(strings.ToLower(req.Filename), ".mp4") {
+		return nil, fmt.Errorf("only MP4 files are allowed for upload")
+	}
 
 	// Ensure we have at least one alive Data Keeper
 	if len(s.dataKeepers) == 0 {
@@ -82,6 +88,7 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 	utils.PrintDataFrame(s.fileTable)
 	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeper}, nil
 }
+
 
 // RequestDownload returns all Data Keepers that store the requested file
 func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadRequest) (*pb.DownloadResponse, error) {
