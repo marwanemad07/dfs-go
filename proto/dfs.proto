@@ -13,6 +13,7 @@ service MasterTracker {
   // Data Keeper sends a heartbeat to indicate it is alive.
   rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
+
 service DataKeeper {
   rpc ReplicateFile(ReplicationRequest) returns (ReplicationResponse);
 }

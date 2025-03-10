@@ -2,18 +2,19 @@ package main
 
 import (
 	"context"
+	"dfs/config"
 	pb "dfs/proto"
+	"dfs/utils"
 	"fmt"
 	"log"
-
 	//"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
-	"dfs/config"
-	"dfs/utils"
-
+	// "dfs/utils"
+	// "dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
@@ -162,6 +163,99 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	return &pb.HeartbeatResponse{Success: true}, nil
 }
 
+func (s *MasterTracker) ReplicationCheck() {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
+    for range ticker.C {
+        s.mu.Lock()
+        s.performReplication()
+        s.mu.Unlock()
+    }
+}
+
+func (s *MasterTracker) performReplication() {
+	filenameSeries := s.fileTable.Col("filename")
+	filenameMap := make(map[string]struct{})
+	for _, filename := range filenameSeries.Records() {
+		filenameMap[filename] = struct{}{}
+	}
+	var filenames []string
+	for filename := range filenameMap {
+		filenames = append(filenames, filename)
+	}
+	log.Printf("[REPLICATION] Replicating files names: %v", filenames)
+	for _, filename := range filenames {
+		filtered := s.fileTable.Filter(
+			dataframe.F{Colname: "filename", Comparator: "==", Comparando: filename},
+			dataframe.F{Colname: "is_alive", Comparator: "==", Comparando: "true"},
+		)
+		currentCount := filtered.Nrow()
+		if currentCount < 3 {
+			sources := filtered.Col("data_keeper").Records()
+			if len(sources) == 0 {
+				continue
+			}
+			source := sources[0]
+			needed := 3 - currentCount
+			for i := 0; i < needed; i++ {
+				possibleDests := s.getPossibleDestinations(filtered)
+				if len(possibleDests) == 0 {
+					break
+				}
+				destination := possibleDests[0] //TODO: pick random 
+				// TODO: NO REPEATED DESTINATION
+				log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
+				if err := s.notifyMachineDataTransfer(source, destination, filename); err != nil {
+					log.Printf("[ERROR] Replication failed for file: %s from Data Keeper: %s to Data Keeper: %s, error: %v", filename, source, destination, err)
+				} else {
+					log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
+				}
+			}
+		}
+	}
+}
+func (s *MasterTracker) notifyMachineDataTransfer(source, destination, filename string) error {
+	sourcePortInt, err := strconv.Atoi(source)
+    if err != nil {
+        log.Printf("Invalid source port: %s", source)
+        return err
+    }
+    grpcPort := strconv.Itoa(sourcePortInt + 1000)
+	conn, err := grpc.Dial("localhost:"+grpcPort, grpc.WithInsecure())
+	if err != nil {
+		log.Printf("[ERROR] Failed to connect to Data Keeper: %v", err)
+		return err
+	}
+	dataKeeper := pb.NewDataKeeperClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if _, err := dataKeeper.ReplicateFile(ctx, &pb.ReplicationRequest{DestinationAddress: destination, Filename: filename}); err != nil {
+		log.Printf("[ERROR] Failed to replicate file: %v", err)
+	}
+    defer conn.Close()
+	defer cancel()
+    return err
+}
+func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {
+    currentDKs := filtered.Col("data_keeper").Records()
+    possible := make([]string, 0)
+    for dk := range s.dataKeepers {
+        if !contains(currentDKs, dk) {
+            possible = append(possible, dk)
+        }
+    }
+    return possible
+}
+func contains(slice []string, item string) bool {
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
+}
+
+
+
 func main() {
 	port := config.LoadConfig("config.json").Server.Port
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -175,9 +269,6 @@ func main() {
 	// Register it with the gRPC server
 	grpcServer := grpc.NewServer()
 	pb.RegisterMasterTrackerServer(grpcServer, masterTracker)
-
-	// Start checking for inactive Data Keepers
-	// go masterTracker.CheckInactiveDataKeepers()
 
 	log.Printf("Master Tracker is running on port %d🚀", port)
 	if err := grpcServer.Serve(lis); err != nil {
