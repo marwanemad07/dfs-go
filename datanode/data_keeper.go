@@ -3,19 +3,19 @@ package main
 import (
 	"bufio"
 	"context"
+	pb "dfs/proto"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
-	pb "dfs/proto"
+
 	"google.golang.org/grpc"
 )
-type DataKeeperServer struct {
-	pb.UnimplementedDataKeeperServer
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -30,6 +30,21 @@ func main() {
 	// Start gRPC heartbeat mechanism
 	go startHeartbeat(port)
 
+	tcpPort := os.Args[1]
+	tcpPortInt, err := strconv.Atoi(tcpPort)
+	if err != nil {
+		log.Fatalf("Invalid TCP port: %v", err)
+	}
+	grpcPort := tcpPortInt + 1000
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterDataKeeperServer(grpcServer, &DataKeeperServer{})
+	log.Printf("Data Keeper gRPC server started on port %d", grpcPort)
+	go grpcServer.Serve(lis)
 	select {} // Keep the process running
 }
 
@@ -71,9 +86,9 @@ func sendHeartbeat(id string) {
 	_, err = client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
 	if err != nil {
 		log.Printf("Heartbeat error: %v", err)
-		} else {
-			log.Println("Heartbeat sent successfully")
-		}
+	} else {
+		log.Println("Heartbeat sent successfully")
+	}
 	defer conn.Close()
 	defer cancel()
 }
@@ -93,9 +108,9 @@ func handleClient(conn net.Conn) {
 
 	// Check if it's an upload or download request
 	if requestType == "UPLOAD" {
-		HandleFileUpload(reader,conn)
+		HandleFileUpload(reader, conn)
 	} else if requestType == "DOWNLOAD" {
-		HandleFileDownload(reader,conn)
+		HandleFileDownload(reader, conn)
 	} else {
 		log.Println("Invalid request type:", requestType)
 	}
@@ -111,8 +126,11 @@ func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
 		log.Println(err)
 		return
 	}
+	filePath := filename
 
-	filePath := "storage/" + filename
+	if len(filename) < 30  {
+		filePath = "storage/" + filename
+	}
 	file, err := os.Create(filePath)
 	if err != nil {
 		log.Printf("Failed to create file %s: %v\n", filePath, err)
@@ -167,31 +185,33 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 }
 
 func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
+	log.Printf("[DATA KEEPER] Replicating file %s to %s", req.Filename, req.DestinationAddress)
 	filename := req.Filename
 	destinationAddress := req.DestinationAddress
+	filePath := filename 
+	log.Printf("[DATA KEEPER] Replicating file %s to %s", filename, destinationAddress)
 
-	// Check if the file exists
-	filePath := fmt.Sprintf("storage/%s", filename)
+	// Check if the file exists.
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Printf("[REPLICATION ERROR] File %s not found for replication", filename)
+		log.Printf("[REPLICATION ERROR] File %s not found", filename)
 		return &pb.ReplicationResponse{Success: false}, err
 	}
 
-	// Open connection to destination Data Keeper
-	conn, err := net.Dial("tcp", destinationAddress)
+	// Open connection to destination Data Keeper.
+	conn, err := net.Dial("tcp", "localhost:"+destinationAddress)
 	if err != nil {
 		log.Printf("[REPLICATION ERROR] Cannot connect to destination %s: %v", destinationAddress, err)
 		return &pb.ReplicationResponse{Success: false}, err
 	}
 	defer conn.Close()
 
-	// Notify destination
+	// Notify the destination about the upcoming file upload.
 	writer := bufio.NewWriter(conn)
 	writer.WriteString("UPLOAD\n")
-	writer.WriteString(filename + "\n")
+	writer.WriteString(filename+ strconv.Itoa(rand.Intn(1000)) + "\n")
 	writer.Flush()
 
-	// Send file
+	// Send the file.
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("[REPLICATION ERROR] Cannot open file %s: %v", filename, err)
@@ -207,7 +227,6 @@ func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.Replicatio
 	log.Printf("[REPLICATION SUCCESS] File %s replicated to %s", filename, destinationAddress)
 	return &pb.ReplicationResponse{Success: true}, nil
 }
-
 
 // readFilename reads and trims the filename from the connection
 func readFilename(reader *bufio.Reader) (string, error) {
@@ -226,4 +245,56 @@ func sendResponse(conn net.Conn, message string) error {
 		return fmt.Errorf("failed to send response: %w", err)
 	}
 	return writer.Flush()
+}
+
+type DataKeeperServer struct {
+	pb.UnimplementedDataKeeperServer
+}
+
+func (s *DataKeeperServer) StartReplication(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
+	log.Printf("[Replication] Starting replication of %s to %s", req.Filename, req.DestinationAddress)
+
+	// Send the file from this Data Keeper to the destination
+	err := sendFile(req.DestinationAddress, req.Filename)
+	if err != nil {
+		log.Printf("[Replication] File transfer failed: %v", err)
+		return &pb.ReplicationResponse{Success: false}, err
+	}
+
+	log.Printf("[Replication] File %s replicated successfully to %s", req.Filename, req.DestinationAddress)
+	return &pb.ReplicationResponse{Success: true}, nil
+}
+
+func sendFile(destination, filename string) error {
+	srcPath := "storage/" + filename
+	dstAddr := destination + ":6000" // Destination listens on port 6000
+
+	// Open the source file
+	file, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer file.Close()
+
+	// Connect to the destination Data Keeper
+	conn, err := net.Dial("tcp", dstAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer conn.Close()
+
+	// Send the filename first
+	_, err = conn.Write([]byte(filename + "\n"))
+	if err != nil {
+		return fmt.Errorf("failed to send filename: %w", err)
+	}
+
+	// Copy file data over TCP
+	_, err = io.Copy(conn, file)
+	if err != nil {
+		return fmt.Errorf("file transfer failed: %w", err)
+	}
+
+	log.Printf("[Replication] File %s sent successfully to %s", filename, destination)
+	return nil
 }

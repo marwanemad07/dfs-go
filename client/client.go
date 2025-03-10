@@ -45,7 +45,7 @@ func main() {
 }
 
 // Upload logic
-func uploadFile(client pb.MasterTrackerClient, filename string) {
+func uploadFile(master pb.MasterTrackerClient, filename string) {
 	fmt.Println("Uploading file:", filename)
 	dir, err := os.Getwd()
 	if err != nil {
@@ -56,7 +56,7 @@ func uploadFile(client pb.MasterTrackerClient, filename string) {
 	// Request Data Keeper from Master Tracker
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	uploadResp, err := client.RequestUpload(ctx, &pb.UploadRequest{Filename: fullPath})
+	uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: fullPath})
 	if err != nil {
 		log.Fatalf("Error requesting upload: %v", err)
 	}

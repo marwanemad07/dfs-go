@@ -2,20 +2,19 @@ package main
 
 import (
 	"context"
+	"dfs/config"
 	pb "dfs/proto"
+	"dfs/utils"
 	"fmt"
 	"log"
-	//"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
-	"dfs/utils"
-	"dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 // MasterTracker struct manages file storage using gota DataFrame
@@ -143,91 +142,98 @@ func (s *MasterTracker) CheckInactiveDataKeepers() {
 	}
 }
 
-func (s *MasterTracker) CheckAndReplicateFiles() {
-	ticker := time.NewTicker(10 * time.Second) // Run every 10 seconds
-	defer ticker.Stop()
+func (s *MasterTracker) ReplicationCheck() {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
+    for range ticker.C {
+        s.mu.Lock()
+        s.performReplication()
+        s.mu.Unlock()
+    }
+}
 
-	for range ticker.C {
-		s.mu.Lock()
-		// Iterate over all files
-		fileRecords := s.fileTable.Maps()
-		for _, record := range fileRecords {
-			filename := record["filename"].(string)
-			dataKeepers := s.GetDataKeepersForFile(filename)
-
-			if len(dataKeepers) < 3 {
-				log.Printf("[REPLICATION] File %s has only %d copies, initiating replication", filename, len(dataKeepers))
-				s.ReplicateFile(filename, dataKeepers)
+func (s *MasterTracker) performReplication() {
+	filenameSeries := s.fileTable.Col("filename")
+	filenameMap := make(map[string]struct{})
+	for _, filename := range filenameSeries.Records() {
+		filenameMap[filename] = struct{}{}
+	}
+	var filenames []string
+	for filename := range filenameMap {
+		filenames = append(filenames, filename)
+	}
+	log.Printf("[REPLICATION] Replicating files names: %v", filenames)
+	for _, filename := range filenames {
+		filtered := s.fileTable.Filter(
+			dataframe.F{Colname: "filename", Comparator: "==", Comparando: filename},
+			dataframe.F{Colname: "is_alive", Comparator: "==", Comparando: "true"},
+		)
+		currentCount := filtered.Nrow()
+		if currentCount < 3 {
+			sources := filtered.Col("data_keeper").Records()
+			if len(sources) == 0 {
+				continue
+			}
+			source := sources[0]
+			needed := 3 - currentCount
+			for i := 0; i < needed; i++ {
+				possibleDests := s.getPossibleDestinations(filtered)
+				if len(possibleDests) == 0 {
+					break
+				}
+				destination := possibleDests[0] //TODO: pick random 
+				// TODO: NO REPEATED DESTINATION
+				log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
+				if err := s.notifyMachineDataTransfer(source, destination, filename); err != nil {
+					log.Printf("[ERROR] Replication failed for file: %s from Data Keeper: %s to Data Keeper: %s, error: %v", filename, source, destination, err)
+				} else {
+					log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
+				}
 			}
 		}
 	}
 }
-
-// Get a list of Data Keepers storing the file
-func (s *MasterTracker) GetDataKeepersForFile(filename string) []string {
-	filtered := s.fileTable.Filter(
-		dataframe.F{Colname: "filename", Comparator: "==", Comparando: filename},
-		dataframe.F{Colname: "is_alive", Comparator: "==", Comparando: "true"},
-	)
-	return filtered.Col("data_keeper").Records()
-}
-
-// Select a new machine for replication
-func (s *MasterTracker) SelectMachineToCopyTo(existingKeepers []string) (string, error) {
-	for dataKeeperID := range s.dataKeepers {
-		if slices.Contains(existingKeepers,dataKeeperID) {
-			return dataKeeperID, nil
-		}
-	}
-	return "", fmt.Errorf("no available Data Keeper for replication")
-}
-
-
-// Replicate a file to a new Data Keeper
-func (s *MasterTracker) ReplicateFile(filename string, existingKeepers []string) {
-	sourceMachine := existingKeepers[0] // Select the first available source
-
-	// Find a new destination machine
-	destinationMachine, err := s.SelectMachineToCopyTo(existingKeepers)
+func (s *MasterTracker) notifyMachineDataTransfer(source, destination, filename string) error {
+	sourcePortInt, err := strconv.Atoi(source)
+    if err != nil {
+        log.Printf("Invalid source port: %s", source)
+        return err
+    }
+    grpcPort := strconv.Itoa(sourcePortInt + 1000)
+	conn, err := grpc.Dial("localhost:"+grpcPort, grpc.WithInsecure())
 	if err != nil {
-		log.Printf("[REPLICATION ERROR] No valid destination for file: %s", filename)
-		return
+		log.Printf("[ERROR] Failed to connect to Data Keeper: %v", err)
+		return err
 	}
-
-	log.Printf("[REPLICATION] Copying %s from %s to %s", filename, sourceMachine, destinationMachine)
-
-	// Notify source and destination machines to start replication
-	conn, err := grpc.Dial(sourceMachine, grpc.WithInsecure())
-	if err != nil {
-		log.Printf("[REPLICATION ERROR] Failed to connect to source %s: %v", sourceMachine, err)
-		return
+	dataKeeper := pb.NewDataKeeperClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if _, err := dataKeeper.ReplicateFile(ctx, &pb.ReplicationRequest{DestinationAddress: destination, Filename: filename}); err != nil {
+		log.Printf("[ERROR] Failed to replicate file: %v", err)
 	}
-	defer conn.Close()
-
-	client := pb.NewDataKeeperClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+    defer conn.Close()
 	defer cancel()
-
-	_, err = client.ReplicateFile(ctx, &pb.ReplicationRequest{
-		Filename:           filename,
-		DestinationAddress: destinationMachine,
-	})
-	if err != nil {
-		log.Printf("[REPLICATION ERROR] Failed to initiate replication: %v", err)
-		return
-	}
-
-	// Update lookup table
-	newRow := dataframe.New(
-		series.New([]string{filename}, series.String, "filename"),
-		series.New([]string{destinationMachine}, series.String, "data_keeper"),
-		series.New([]string{fmt.Sprintf("/storage/%s", filename)}, series.String, "file_path"),
-		series.New([]string{"true"}, series.String, "is_alive"),
-	)
-	s.fileTable = s.fileTable.RBind(newRow)
-
-	log.Printf("[REPLICATION SUCCESS] File %s replicated to %s", filename, destinationMachine)
+    return err
 }
+func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {
+    currentDKs := filtered.Col("data_keeper").Records()
+    possible := make([]string, 0)
+    for dk := range s.dataKeepers {
+        if !contains(currentDKs, dk) {
+            possible = append(possible, dk)
+        }
+    }
+    return possible
+}
+func contains(slice []string, item string) bool {
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
+}
+
+
 
 func main() {
 	port := config.LoadConfig("config.json").Server.Port
@@ -245,8 +251,7 @@ func main() {
 
 	// Start checking for inactive Data Keepers
 	go masterTracker.CheckInactiveDataKeepers()
-
-	go masterTracker.CheckAndReplicateFiles()
+	go masterTracker.ReplicationCheck()
 
 
 	log.Printf("Master Tracker is running on port %d🚀", port)
