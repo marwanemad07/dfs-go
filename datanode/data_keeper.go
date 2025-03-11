@@ -23,14 +23,15 @@ type DataKeeperServer struct {
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run main.go <master_address_type> <node_port> ")
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: go run data_keeper.go <master_address_type> <data_node_port> <master_port>")
 		return
 	}
 
 	// Start TCP Server for receiving files
 	masterAddress := ""
 	dataNodePort := os.Args[2]
+	masterPort := os.Args[3]
 
 	switch os.Args[1] {
 	case "local":
@@ -45,7 +46,7 @@ func main() {
 	go startTCPServer(dataNodePort)
 
 	// Start gRPC heartbeat mechanism
-	go startHeartbeat(masterAddress, dataNodePort)
+	go startHeartbeat(masterAddress, masterPort, dataNodePort)
 
 	tcpPort := os.Args[2]
 	tcpPortInt, err := strconv.Atoi(tcpPort)
@@ -85,9 +86,9 @@ func startTCPServer(port string) {
 }
 
 // create the gRPC connection and start sending heartbeat
-func startHeartbeat(masterAddress string, id string) {
+func startHeartbeat(masterAddress string, masterPort string, id string) {
 	// create connection
-	conn, err := grpc.Dial(masterAddress+":50050", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(masterAddress+ ":" + masterPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return

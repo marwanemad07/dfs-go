@@ -7,6 +7,7 @@ import (
 	"dfs/utils"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	//"math/rand"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	// "dfs/utils"
-	// "dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
@@ -73,13 +73,13 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 		break
 	}
 
-	filePath := fmt.Sprintf("/storage/%s", req.Filename)
+	filename := fmt.Sprintf("/storage/%s", req.Filename)
 
 	// Append to DataFrame
 	newRow := dataframe.New(
 		series.New([]string{req.Filename}, series.String, "filename"),
 		series.New([]string{selectedDataKeeper}, series.String, "data_keeper"),
-		series.New([]string{filePath}, series.String, "file_path"),
+		series.New([]string{filename}, series.String, "file_path"),
 		series.New([]string{"true"}, series.String, "is_alive"),
 	)
 	s.fileTable = s.fileTable.RBind(newRow)
@@ -264,8 +264,15 @@ func contains(slice []string, item string) bool {
 
 
 func main() {
-	port := config.LoadConfig("config.json").Server.Port
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run master_tracker.go <master_port> ")
+		return
+	}
+
+	port := os.Args[1]
+	
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -277,7 +284,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	pb.RegisterMasterTrackerServer(grpcServer, masterTracker)
 
-	log.Printf("Master Tracker is running on port %d🚀", port)
+	log.Printf("Master Tracker is running on port %s🚀", port)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}

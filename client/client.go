@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"dfs/config"
+	// "dfs/config"
 	pb "dfs/proto"
 	"fmt"
 	"io"
@@ -18,8 +18,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: client <upload/download> <filename>")
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: client <upload/download> <filename> <master_port>")
 		return
 	}
 
@@ -27,8 +27,8 @@ func main() {
 	filename := os.Args[2]
 
 	// Connect to the Master Tracker
-	serverPort := config.LoadConfig("config.json").Server.Port
-	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", serverPort), grpc.WithInsecure())
+	masterPort := os.Args[3]
+	conn, err := grpc.Dial(fmt.Sprintf("localhost:%s", masterPort), grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Could not connect to Master Tracker: %v", err)
 	}

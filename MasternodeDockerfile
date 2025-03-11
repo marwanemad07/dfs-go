@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN go build -o datanode_app ./datanode/data_keeper.go
+RUN go build -o masternode_app ./master/master_tracker.go
 
 # Stage 2: Run (minimal image)
 FROM alpine:latest
@@ -22,8 +22,9 @@ FROM alpine:latest
 WORKDIR /app
 
 # Copy compiled binary from builder stage
-COPY --from=builder /app/datanode_app .
+COPY --from=builder /app/masternode_app .
+COPY --from=builder /app/config ./config
 
-ENTRYPOINT ["./datanode_app", "docker"]
-CMD ["5050"]
+ENTRYPOINT ["./masternode_app"]
+CMD ["50050"]
 
