@@ -3,11 +3,14 @@ syntax = "proto3"; // Use proto3 syntax for the protocol buffer.
 package dfs; // Define the package name.
 
 option go_package = "dfs/proto"; // Set Go package path for generated files
+import "google/protobuf/empty.proto";
 
 // Master Tracker Service: Handles file upload/download requests and heartbeat updates.
 service MasterTracker {
   // A client requests a Data Keeper to upload a file.
   rpc RequestUpload(UploadRequest) returns (UploadResponse);
+  // Data Keeper notifies the Master Tracker that a file has been uploaded successfully.
+  rpc RequestUploadSuccess(FileUploadSuccess) returns (google.protobuf.Empty);
   // A client requests addresses to download a file.
   rpc RequestDownload(DownloadRequest) returns (DownloadResponse);
   // Data Keeper sends a heartbeat to indicate it is alive.
@@ -15,21 +18,31 @@ service MasterTracker {
 }
 
 service DataKeeper {
-  rpc ReplicateFile(ReplicationRequest) returns (ReplicationResponse);
+  rpc ReplicateFile(ReplicationRequest) returns (FileUploadSuccess);
 }
 
 message ReplicationRequest {
   string filename = 1;
   string destinationAddress = 2;
+  string destinationName = 3;
 }
 
-message ReplicationResponse {
-  bool success = 1;
-}
+
 // schemas for file upload/download and heartbeat.
 // Message definitions for file upload/download.
 message UploadRequest {
   string filename = 1;
+}
+
+message FileUploadSuccess {
+  string dataKeeperName = 1;
+  string filename = 2;
+  string filePath = 3;
+  int32 portNumber = 4;
+}
+
+message UploadSuccessResponse {
+  bool success = 1;
 }
 
 message UploadResponse {
@@ -46,9 +59,17 @@ message DownloadResponse {
 
 // Message definitions for heartbeat.
 message HeartbeatRequest {
-  string dataKeeperId = 1;
+  string dataKeeperName = 1;
+  string dataKeeperAddress = 2;
+  repeated PortStatus portsTCP = 3;
+  repeated PortStatus portsGRPC = 4;
 }
 
 message HeartbeatResponse {
   bool success = 1;
+}
+
+message PortStatus {
+  int32 portNumber = 1;
+  bool isAvailable = 2;
 }

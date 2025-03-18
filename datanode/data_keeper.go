@@ -3,70 +3,219 @@ package main
 import (
 	"bufio"
 	"context"
+	"dfs/config"
 	pb "dfs/proto"
+	"dfs/utils"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type DataKeeperServer struct {
 	pb.UnimplementedDataKeeperServer
+	portsTcp  []*pb.PortStatus
+	portsGrpc []*pb.PortStatus
 }
 
+type PortStatus struct {
+	PortNumber  int  `json:"portNumber"`
+	IsAvailable bool `json:"isAvailable"`
+}
+
+type Globals struct {
+	masterAddress string
+	nodeName      string
+	nodeAddress   string
+}
+
+var globals = &Globals{}
+
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run main.go <master_address_type> <node_port> ")
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports>  ...")
 		return
 	}
 
 	// Start TCP Server for receiving files
 	masterAddress := ""
-	dataNodePort := os.Args[2]
+	nodeAddress := ""
 
 	switch os.Args[1] {
 	case "local":
 		masterAddress = "localhost"
+		nodeAddress = "localhost"
 	case "docker":
 		masterAddress = "host.docker.internal"
+		nodeAddress = "host.docker.internal"
+	case "network":
+		masterAddress, _ = utils.GetLocalIP()
+		nodeAddress, _ = utils.GetLocalIP()
 	default:
 		fmt.Println("Invalid mode. Use 'local' or 'docker'.")
 		os.Exit(1)
 	}
 
-	go startTCPServer(dataNodePort)
+	numberOfdataNodePorts, _ := strconv.Atoi(os.Args[2])
+	startTcpPort, err := strconv.Atoi(os.Args[3])
 
-	// Start gRPC heartbeat mechanism
-	go startHeartbeat(masterAddress, dataNodePort)
-
-	tcpPort := os.Args[2]
-	tcpPortInt, err := strconv.Atoi(tcpPort)
 	if err != nil {
-		log.Fatalf("Invalid TCP port: %v", err)
+		log.Fatalf("Invalid number of ports: %v", err)
+		return
 	}
-	grpcPort := tcpPortInt + 1000
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+	tcpPorts := make([]*pb.PortStatus, 0)
+	counter := 0 // counter for ports
+	for range numberOfdataNodePorts {
+		port := startTcpPort + counter
+		for !isPortAvailable(port) {
+			counter += 1
+			port = startTcpPort + counter
+		}
+
+		tcpPorts = append(tcpPorts, &pb.PortStatus{
+			PortNumber:  int32(port),
+			IsAvailable: true,
+		})
+		counter++
 	}
-	grpcServer := grpc.NewServer()
-	pb.RegisterDataKeeperServer(grpcServer, &DataKeeperServer{})
-	log.Printf("Data Keeper gRPC server started on port %d", grpcPort)
-	go grpcServer.Serve(lis)
+
+	dataKeeperServer := &DataKeeperServer{}
+
+	cfg := config.LoadConfig("config.json")
+
+	masterAddress = masterAddress + ":" + strconv.Itoa(cfg.Server.Port)
+
+	startGrpcPort := startTcpPort + counter
+	grpcPorts := make([]*pb.PortStatus, 0)
+	for i := range numberOfdataNodePorts {
+		log.Printf("Port: %d", tcpPorts[i].PortNumber)
+		go startTCPServer(tcpPorts[i])
+
+		// Start gRPC server on the port tcpPort + i
+		port := startGrpcPort + counter
+		for !isPortAvailable(port) {
+			counter += 1
+			port = startGrpcPort + counter
+		}
+
+		grpcPorts = append(grpcPorts, &pb.PortStatus{
+			PortNumber:  int32(port),
+			IsAvailable: true,
+		})
+
+		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			log.Fatalf("failed to listen: %v", err)
+		}
+		grpcServer := grpc.NewServer()
+		pb.RegisterDataKeeperServer(grpcServer, dataKeeperServer)
+		log.Printf("Data Keeper gRPC server started on port %d", port)
+		go grpcServer.Serve(lis)
+		counter++
+	}
+
+	dataKeeperServer.SetPorts(tcpPorts, grpcPorts)
+
+	nodeName := uuid.New().String()
+	globals.masterAddress = masterAddress
+	globals.nodeName = nodeName
+	globals.nodeAddress = nodeAddress
+
+	go dataKeeperServer.startHeartbeat(masterAddress, nodeAddress, nodeName)
 	select {} // Keep the process running
 }
 
-func startTCPServer(port string) {
-	address := ":" + port
+func (s *DataKeeperServer) SetPorts(tcpPorts []*pb.PortStatus, grpcPorts []*pb.PortStatus) {
+	s.portsTcp = tcpPorts
+	s.portsGrpc = grpcPorts
+}
+
+func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.ReplicationRequest) (*pb.FileUploadSuccess, error) {
+	log.Printf("[DATA KEEPER] Replicating file %s to %s", req.Filename, req.DestinationAddress)
+	filename := req.Filename
+	destinationAddress := req.DestinationAddress
+	wd, _ := os.Getwd()
+	filePath := path.Join( "storage", req.Filename)
+	absolutepath := path.Join(wd, filePath)
+
+	log.Printf("[DATA KEEPER] Replicating file %s to %s", filename, destinationAddress)
+
+	// Check if the file exists.
+	if _, err := os.Stat(absolutepath); os.IsNotExist(err) {
+		log.Printf("[REPLICATION ERROR] File %s not found", filename)
+		return &pb.FileUploadSuccess{}, err
+	}
+
+	// Open connection to destination Data Keeper.
+	conn, err := net.Dial("tcp", destinationAddress)
+	if err != nil {
+		log.Printf("[REPLICATION ERROR] Cannot connect to destination %s: %v", destinationAddress, err)
+		return &pb.FileUploadSuccess{}, err
+	}
+	defer conn.Close()
+
+	// Notify the destination about the upcoming file upload.
+	writer := bufio.NewWriter(conn)
+	writer.WriteString("REPLICATE\n")
+	writer.WriteString(filename + "\n")
+	writer.Flush()
+
+	// Send the file.
+	file, err := os.Open(absolutepath)
+	if err != nil {
+		log.Printf("[REPLICATION ERROR] Cannot open file %s: %v", filename, err)
+		return &pb.FileUploadSuccess{}, err
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(conn, file); err != nil {
+		log.Printf("[REPLICATION ERROR] Failed to send file: %v", err)
+		return &pb.FileUploadSuccess{}, err
+	}
+
+	log.Printf("[REPLICATION SUCCESS] File %s replicated to %s", filename, destinationAddress)
+	port, err := utils.ExtractPort(destinationAddress)
+	if err != nil {
+		return &pb.FileUploadSuccess{}, err
+	}
+	return &pb.FileUploadSuccess{DataKeeperName: req.DestinationName, Filename: filename, FilePath: filePath, PortNumber: int32(port)}, nil
+}
+
+// create the gRPC connection and start sending heartbeat
+func (s *DataKeeperServer) startHeartbeat(masterAddress string, dataNodeAddress string, name string) {
+	// create connection
+	conn, err := grpc.Dial(masterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("Could not connect to Master Tracker: %v", err)
+		return
+	}
+
+	// free resources
+	defer conn.Close()
+
+	// create gRPC client
+	client := pb.NewMasterTrackerClient(conn)
+
+	// send heartbeat every second till process stops
+	// TODO: We need here to use alternative to time.Sleep (events) :: EMAD
+	for {
+		sendHeartbeat(client, name, dataNodeAddress, s.portsTcp, s.portsGrpc)
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func startTCPServer(portStatus *pb.PortStatus) {
+	address := fmt.Sprintf(":%d", portStatus.PortNumber)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("Failed to start TCP server: %v", err)
@@ -80,42 +229,23 @@ func startTCPServer(port string) {
 			continue
 		}
 
-		go handleClient(conn)
-	}
-}
-
-// create the gRPC connection and start sending heartbeat
-func startHeartbeat(masterAddress string, id string) {
-	// create connection
-	conn, err := grpc.Dial(masterAddress+":50050", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Printf("Could not connect to Master Tracker: %v", err)
-		return
-	}
-
-	// free resources
-	defer conn.Close()
-
-	// create gRPC client
-	client := pb.NewMasterTrackerClient(conn)
-
-	// send heartbeat every second till process stops
-	for {
-		sendHeartbeat(client, id)
-		time.Sleep(1 * time.Second)
+		go handleTcpRequest(conn)
 	}
 }
 
 // notify master that this data node is alive
-func sendHeartbeat(client pb.MasterTrackerClient, id string) {
-	// context with 1 second timeout
+func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress string, portsTcp []*pb.PortStatus, portsGrpc []*pb.PortStatus) {
+	// Context with 1-second timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel() // Ensure resources are freed
 
-	// free resources
-	defer cancel()
-
-	// send heartbeat message
-	_, err := client.SendHeartbeat(ctx, &pb.HeartbeatRequest{DataKeeperId: id})
+	// Send heartbeat message
+	_, err := client.SendHeartbeat(ctx, &pb.HeartbeatRequest{
+		DataKeeperName:    name,
+		DataKeeperAddress: dataNodeAddress,
+		PortsTCP:          portsTcp,
+		PortsGRPC:         portsGrpc,
+	})
 	if err != nil {
 		log.Printf("Heartbeat error: %v", err)
 	} else {
@@ -123,7 +253,56 @@ func sendHeartbeat(client pb.MasterTrackerClient, id string) {
 	}
 }
 
-func handleClient(conn net.Conn) {
+// HandleFileUpload processes file uploads from the client
+func HandleFileUpload(reader *bufio.Reader, conn net.Conn, isUpload bool) {
+	filename, err := readFilename(reader)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	utils.EnsureStorageFolder()
+	filePath := path.Join("storage", filename)
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		log.Printf("Failed to create file %s: %v\n", filePath, err)
+		return
+	}
+	defer file.Close()
+	defer conn.Close()
+	if _, err = io.Copy(file, conn); err != nil {
+		log.Printf("Failed to save file %s: %v\n", filePath, err)
+		return
+	}
+	log.Printf("File %s received and saved successfully!\n", filename)
+	remoteAddr := conn.RemoteAddr().String()
+	remotePort, _ := utils.ExtractPort(remoteAddr)
+
+	// Notify the master that the file has been uploaded
+	if isUpload {
+		SendUploadSuccessResponse(filename, filePath, int32(remotePort))
+	}
+}
+
+func SendUploadSuccessResponse(filename, filePath string, portNumber int32) {
+	conn, err := grpc.Dial(globals.masterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	client := pb.NewMasterTrackerClient(conn)
+	_, err = client.RequestUploadSuccess(context.Background(), &pb.FileUploadSuccess{
+		DataKeeperName: globals.nodeName,
+		Filename:       filename,
+		FilePath:       filePath,
+		PortNumber:     portNumber,
+	})
+	if err != nil {
+		log.Printf("Failed to notify master about file upload: %v\n", err)
+		return
+	}
+	log.Printf("Notified master about file upload: %s\n", filename)
+	defer conn.Close()
+}
+
+func handleTcpRequest(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	// Read request type (Upload or Download)
@@ -138,44 +317,15 @@ func handleClient(conn net.Conn) {
 
 	// Check if it's an upload or download request
 	if requestType == "UPLOAD" {
-		HandleFileUpload(reader, conn)
+		HandleFileUpload(reader, conn, true)
+	} else if requestType == "REPLICATE" {
+		HandleFileUpload(reader, conn, false)
 	} else if requestType == "DOWNLOAD" {
 		HandleFileDownload(reader, conn)
 	} else {
 		log.Println("Invalid request type:", requestType)
 	}
 	defer conn.Close()
-
-}
-
-// HandleFileUpload processes file uploads from the client
-func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
-
-	filename, err := readFilename(reader)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	filePath := filename
-
-	if len(filename) < 30 {
-		filePath = "storage/" + filename
-	}
-	file, err := os.Create(filePath)
-	if err != nil {
-		log.Printf("Failed to create file %s: %v\n", filePath, err)
-		return
-	}
-	defer file.Close()
-
-	if _, err = io.Copy(file, conn); err != nil {
-		log.Printf("Failed to save file %s: %v\n", filePath, err)
-		return
-	}
-
-	log.Printf("File %s received and saved successfully!\n", filename)
-	defer conn.Close()
-
 }
 
 // HandleFileDownload processes file download requests
@@ -210,52 +360,7 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 		log.Println("File sent successfully!")
 	}
 
-	defer conn.Close()
 	defer file.Close()
-}
-
-func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
-	log.Printf("[DATA KEEPER] Replicating file %s to %s", req.Filename, req.DestinationAddress)
-	filename := req.Filename
-	destinationAddress := req.DestinationAddress
-	filePath := filename
-	log.Printf("[DATA KEEPER] Replicating file %s to %s", filename, destinationAddress)
-
-	// Check if the file exists.
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Printf("[REPLICATION ERROR] File %s not found", filename)
-		return &pb.ReplicationResponse{Success: false}, err
-	}
-
-	// Open connection to destination Data Keeper.
-	conn, err := net.Dial("tcp", "localhost:"+destinationAddress)
-	if err != nil {
-		log.Printf("[REPLICATION ERROR] Cannot connect to destination %s: %v", destinationAddress, err)
-		return &pb.ReplicationResponse{Success: false}, err
-	}
-	defer conn.Close()
-
-	// Notify the destination about the upcoming file upload.
-	writer := bufio.NewWriter(conn)
-	writer.WriteString("UPLOAD\n")
-	writer.WriteString(filename + strconv.Itoa(rand.Intn(1000)) + "\n")
-	writer.Flush()
-
-	// Send the file.
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Printf("[REPLICATION ERROR] Cannot open file %s: %v", filename, err)
-		return &pb.ReplicationResponse{Success: false}, err
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(conn, file); err != nil {
-		log.Printf("[REPLICATION ERROR] Failed to send file: %v", err)
-		return &pb.ReplicationResponse{Success: false}, err
-	}
-
-	log.Printf("[REPLICATION SUCCESS] File %s replicated to %s", filename, destinationAddress)
-	return &pb.ReplicationResponse{Success: true}, nil
 }
 
 // readFilename reads and trims the filename from the connection
@@ -277,50 +382,12 @@ func sendResponse(conn net.Conn, message string) error {
 	return writer.Flush()
 }
 
-func (s *DataKeeperServer) StartReplication(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
-	log.Printf("[Replication] Starting replication of %s to %s", req.Filename, req.DestinationAddress)
-
-	// Send the file from this Data Keeper to the destination
-	err := sendFile(req.DestinationAddress, req.Filename)
+func isPortAvailable(port int) bool {
+	addr := fmt.Sprintf(":%d", port)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Printf("[Replication] File transfer failed: %v", err)
-		return &pb.ReplicationResponse{Success: false}, err
+		return false // Port is in use
 	}
-
-	log.Printf("[Replication] File %s replicated successfully to %s", req.Filename, req.DestinationAddress)
-	return &pb.ReplicationResponse{Success: true}, nil
-}
-
-func sendFile(destination, filename string) error {
-	srcPath := "storage/" + filename
-	dstAddr := destination + ":6000" // Destination listens on port 6000
-
-	// Open the source file
-	file, err := os.Open(srcPath)
-	if err != nil {
-		return fmt.Errorf("failed to open source file: %w", err)
-	}
-	defer file.Close()
-
-	// Connect to the destination Data Keeper
-	conn, err := net.Dial("tcp", dstAddr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to destination: %w", err)
-	}
-	defer conn.Close()
-
-	// Send the filename first
-	_, err = conn.Write([]byte(filename + "\n"))
-	if err != nil {
-		return fmt.Errorf("failed to send filename: %w", err)
-	}
-
-	// Copy file data over TCP
-	_, err = io.Copy(conn, file)
-	if err != nil {
-		return fmt.Errorf("file transfer failed: %w", err)
-	}
-
-	log.Printf("[Replication] File %s sent successfully to %s", filename, destination)
-	return nil
+	listener.Close() // Close immediately after checking
+	return true      // Port is available
 }

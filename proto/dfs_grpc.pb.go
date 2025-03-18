@@ -11,6 +11,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -19,9 +20,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MasterTracker_RequestUpload_FullMethodName   = "/dfs.MasterTracker/RequestUpload"
-	MasterTracker_RequestDownload_FullMethodName = "/dfs.MasterTracker/RequestDownload"
-	MasterTracker_SendHeartbeat_FullMethodName   = "/dfs.MasterTracker/SendHeartbeat"
+	MasterTracker_RequestUpload_FullMethodName        = "/dfs.MasterTracker/RequestUpload"
+	MasterTracker_RequestUploadSuccess_FullMethodName = "/dfs.MasterTracker/RequestUploadSuccess"
+	MasterTracker_RequestDownload_FullMethodName      = "/dfs.MasterTracker/RequestDownload"
+	MasterTracker_SendHeartbeat_FullMethodName        = "/dfs.MasterTracker/SendHeartbeat"
 )
 
 // MasterTrackerClient is the client API for MasterTracker service.
@@ -32,6 +34,8 @@ const (
 type MasterTrackerClient interface {
 	// A client requests a Data Keeper to upload a file.
 	RequestUpload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (*UploadResponse, error)
+	// Data Keeper notifies the Master Tracker that a file has been uploaded successfully.
+	RequestUploadSuccess(ctx context.Context, in *FileUploadSuccess, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// A client requests addresses to download a file.
 	RequestDownload(ctx context.Context, in *DownloadRequest, opts ...grpc.CallOption) (*DownloadResponse, error)
 	// Data Keeper sends a heartbeat to indicate it is alive.
@@ -50,6 +54,16 @@ func (c *masterTrackerClient) RequestUpload(ctx context.Context, in *UploadReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UploadResponse)
 	err := c.cc.Invoke(ctx, MasterTracker_RequestUpload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *masterTrackerClient) RequestUploadSuccess(ctx context.Context, in *FileUploadSuccess, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MasterTracker_RequestUploadSuccess_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +98,8 @@ func (c *masterTrackerClient) SendHeartbeat(ctx context.Context, in *HeartbeatRe
 type MasterTrackerServer interface {
 	// A client requests a Data Keeper to upload a file.
 	RequestUpload(context.Context, *UploadRequest) (*UploadResponse, error)
+	// Data Keeper notifies the Master Tracker that a file has been uploaded successfully.
+	RequestUploadSuccess(context.Context, *FileUploadSuccess) (*emptypb.Empty, error)
 	// A client requests addresses to download a file.
 	RequestDownload(context.Context, *DownloadRequest) (*DownloadResponse, error)
 	// Data Keeper sends a heartbeat to indicate it is alive.
@@ -100,6 +116,9 @@ type UnimplementedMasterTrackerServer struct{}
 
 func (UnimplementedMasterTrackerServer) RequestUpload(context.Context, *UploadRequest) (*UploadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestUpload not implemented")
+}
+func (UnimplementedMasterTrackerServer) RequestUploadSuccess(context.Context, *FileUploadSuccess) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestUploadSuccess not implemented")
 }
 func (UnimplementedMasterTrackerServer) RequestDownload(context.Context, *DownloadRequest) (*DownloadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestDownload not implemented")
@@ -142,6 +161,24 @@ func _MasterTracker_RequestUpload_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MasterTrackerServer).RequestUpload(ctx, req.(*UploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MasterTracker_RequestUploadSuccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileUploadSuccess)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterTrackerServer).RequestUploadSuccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterTracker_RequestUploadSuccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterTrackerServer).RequestUploadSuccess(ctx, req.(*FileUploadSuccess))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -194,6 +231,10 @@ var MasterTracker_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MasterTracker_RequestUpload_Handler,
 		},
 		{
+			MethodName: "RequestUploadSuccess",
+			Handler:    _MasterTracker_RequestUploadSuccess_Handler,
+		},
+		{
 			MethodName: "RequestDownload",
 			Handler:    _MasterTracker_RequestDownload_Handler,
 		},
@@ -214,7 +255,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DataKeeperClient interface {
-	ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error)
+	ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*FileUploadSuccess, error)
 }
 
 type dataKeeperClient struct {
@@ -225,9 +266,9 @@ func NewDataKeeperClient(cc grpc.ClientConnInterface) DataKeeperClient {
 	return &dataKeeperClient{cc}
 }
 
-func (c *dataKeeperClient) ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error) {
+func (c *dataKeeperClient) ReplicateFile(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*FileUploadSuccess, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationResponse)
+	out := new(FileUploadSuccess)
 	err := c.cc.Invoke(ctx, DataKeeper_ReplicateFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -239,7 +280,7 @@ func (c *dataKeeperClient) ReplicateFile(ctx context.Context, in *ReplicationReq
 // All implementations must embed UnimplementedDataKeeperServer
 // for forward compatibility.
 type DataKeeperServer interface {
-	ReplicateFile(context.Context, *ReplicationRequest) (*ReplicationResponse, error)
+	ReplicateFile(context.Context, *ReplicationRequest) (*FileUploadSuccess, error)
 	mustEmbedUnimplementedDataKeeperServer()
 }
 
@@ -250,7 +291,7 @@ type DataKeeperServer interface {
 // pointer dereference when methods are called.
 type UnimplementedDataKeeperServer struct{}
 
-func (UnimplementedDataKeeperServer) ReplicateFile(context.Context, *ReplicationRequest) (*ReplicationResponse, error) {
+func (UnimplementedDataKeeperServer) ReplicateFile(context.Context, *ReplicationRequest) (*FileUploadSuccess, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReplicateFile not implemented")
 }
 func (UnimplementedDataKeeperServer) mustEmbedUnimplementedDataKeeperServer() {}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"dfs/config"
 	pb "dfs/proto"
+	"dfs/utils"
 	"fmt"
 	"io"
 	"log"
@@ -54,26 +55,19 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 		log.Fatalf("Only MP4 files are allowed for upload")
 	}
 
-	dir, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Failed to get current directory: %v", err)
-	}
-	fullPath := filepath.Join(dir, filename)
 
 	// Request Data Keeper from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: fullPath})
+	uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: filename})
 	if err != nil {
 		log.Fatalf("Error requesting upload: %v", err)
 	}
 
-	dataKeeperPort := uploadResp.DataKeeperAddress
-	dataKeeperAddr := getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
-	log.Printf("Uploading to Data Keeper at %s", dataKeeperAddr)
+	log.Printf("Uploading to Data Keeper at %s", uploadResp.DataKeeperAddress)
 
 	// Send file to Data Keeper via TCP
-	SendFile(dataKeeperAddr, filename)
+	SendFile(uploadResp.DataKeeperAddress, filename)
 }
 
 // Download logic
@@ -112,13 +106,16 @@ func getAddress(port string) string {
 
 // SendFile uploads a file to the server
 func SendFile(address, filename string) {
+	fmt.Println("Uploading file:", filename)
 	// Open the file
-	file, err := os.Open(filename)
+
+	filePath := filepath.Join(utils.GetWorkingDir(), filename)
+	fmt.Println("Uploading file:", filePath,address)
+	file, err := os.Open(filePath)
 	if err != nil {
 		log.Fatalf("Failed to open file: %v", err)
 	}
 	defer file.Close()
-
 	// Connect to Data Keeper
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
