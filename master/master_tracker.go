@@ -338,7 +338,7 @@ func (s *MasterTracker) performReplication() {
 }
 func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNodeName, filename string) error {
 	grpcPortSrc, _ := s.GetRandomAvailablePort(sourceNodeName, GRPC)
-	tpcPortDest, err := s.GetRandomAvailablePort(destinationNodeName, TCP)
+	tcpPortDest, err := s.GetRandomAvailablePort(destinationNodeName, TCP)
 
 	if err != nil {
 		log.Printf("Invalid source port: %s", sourceNodeName)
@@ -351,7 +351,7 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 	}
 	dataKeeper := pb.NewDataKeeperClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	destinationAddress := s.dataKeeperInfo[destinationNodeName].Address + ":" + strconv.Itoa(tpcPortDest)
+	destinationAddress := s.dataKeeperInfo[destinationNodeName].Address + ":" + strconv.Itoa(tcpPortDest)
 	response, err := dataKeeper.ReplicateFile(ctx, &pb.ReplicationRequest{DestinationAddress: destinationAddress, Filename: filename,DestinationName: destinationNodeName});
 	if err != nil {
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
