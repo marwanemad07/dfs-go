@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -88,7 +89,7 @@ func startTCPServer(port string) {
 // create the gRPC connection and start sending heartbeat
 func startHeartbeat(masterAddress string, masterPort string, id string) {
 	// create connection
-	conn, err := grpc.Dial(masterAddress+ ":" + masterPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(masterAddress+":"+masterPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return
@@ -151,7 +152,6 @@ func handleClient(conn net.Conn) {
 
 // HandleFileUpload processes file uploads from the client
 func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
-
 	filename, err := readFilename(reader)
 	if err != nil {
 		log.Println(err)
@@ -160,8 +160,14 @@ func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
 	filePath := filename
 
 	if len(filename) < 30 {
-		filePath = "storage/" + filename
+		filePath = filepath.Join("storage", filename)
+		dir := filepath.Dir(filePath)
+		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			log.Printf("Failed to create storage directory: %v\n", err)
+			return
+		}
 	}
+
 	file, err := os.Create(filePath)
 	if err != nil {
 		log.Printf("Failed to create file %s: %v\n", filePath, err)
@@ -176,7 +182,6 @@ func HandleFileUpload(reader *bufio.Reader, conn net.Conn) {
 
 	log.Printf("File %s received and saved successfully!\n", filename)
 	defer conn.Close()
-
 }
 
 // HandleFileDownload processes file download requests
