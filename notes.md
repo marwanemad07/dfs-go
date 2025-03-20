@@ -3,6 +3,7 @@
 1. Unique File names on the same datanode  (checksum)
 2. Client download
 3. run on diffrent machines 
+4. Client succes message (see arrow 6 in uploading file in the pdf) - This will make the client as a server
 
 ### Enhancements
 

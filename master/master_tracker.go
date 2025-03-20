@@ -169,7 +169,7 @@ func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUp
 
 	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath)
 	s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
-	fmt.Println("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
+	fmt.Printf("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
 	s.performReplication()
 	return &emptypb.Empty{}, nil
 }
