@@ -1,7 +1,10 @@
 package utils
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -47,20 +50,18 @@ func GetLocalIP() (string, error) {
 	return "", fmt.Errorf("no valid local IP found")
 }
 
-func EnsureStorageFolder() {
-	folderPath := "storage"
-
+func EnsureStorageFolder(folderName string) {
 	// Check if the folder exists
-	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
+	if _, err := os.Stat(folderName); os.IsNotExist(err) {
 		// Folder does not exist, create it with 0755 permissions
-		err := os.Mkdir(folderPath, 0755)
+		err := os.Mkdir(folderName, 0755)
 		if err != nil {
 			fmt.Printf("Failed to create folder: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("Folder created: storage")
 	} else {
-		fmt.Println("Folder already exists: storage")
+		fmt.Printf("Folder already exists: %s\n", folderName)
 	}
 }
 
@@ -89,4 +90,58 @@ func ExtractPort(addr string) (int, error) {
 func GetRandomIndex(length int) int {
 	rand.Seed(time.Now().UnixNano())
 	return rand.Intn(length)
+}
+
+// sendResponse writes a message to the connection and flushes it
+func SendResponse(conn net.Conn, message string) error {
+	writer := bufio.NewWriter(conn)
+	_, err := writer.WriteString(message + "\n")
+	if err != nil {
+		return fmt.Errorf("failed to send response: %w", err)
+	}
+	return writer.Flush()
+}
+
+// sendRequest sends a request type and filename to the server
+func SendRequest(conn net.Conn, requestType, filename string) error {
+	writer := bufio.NewWriter(conn)
+
+	// Send request type
+	if _, err := writer.WriteString(requestType + "\n"); err != nil {
+		return fmt.Errorf("failed to send request type: %w", err)
+	}
+
+	// Send filename
+	if _, err := writer.WriteString(filename + "\n"); err != nil {
+		return fmt.Errorf("failed to send filename: %w", err)
+	}
+
+	// Flush data
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush request data: %w", err)
+	}
+
+	return nil
+}
+
+func WriteFileToConnection (file *os.File, conn net.Conn) {
+	writer := bufio.NewWriter(conn)
+	if _, err := io.Copy(writer, file); err != nil {
+		log.Fatalf("Failed to send file data: %v", err)
+	}
+
+	// Ensure all data is sent
+	if err := writer.Flush(); err != nil {
+		log.Fatalf("Failed to flush file data: %v", err)
+	}
+}
+
+func IsPortAvailable(port int) bool {
+	addr := fmt.Sprintf(":%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false // Port is in use
+	}
+	listener.Close() // Close immediately after checking
+	return true      // Port is available
 }

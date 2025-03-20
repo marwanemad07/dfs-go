@@ -77,7 +77,7 @@ func main() {
 	counter := 0 // counter for ports
 	for range numberOfdataNodePorts {
 		port := startTcpPort + counter
-		for !isPortAvailable(port) {
+		for !utils.IsPortAvailable(port) {
 			counter += 1
 			port = startTcpPort + counter
 		}
@@ -103,7 +103,7 @@ func main() {
 
 		// Start gRPC server on the port tcpPort + i
 		port := startGrpcPort + counter
-		for !isPortAvailable(port) {
+		for !utils.IsPortAvailable(port) {
 			counter += 1
 			port = startGrpcPort + counter
 		}
@@ -254,25 +254,17 @@ func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress s
 }
 
 // HandleFileUpload processes file uploads from the client
-func HandleFileUpload(reader *bufio.Reader, conn net.Conn, isUpload bool) {
-	filename, err := readFilename(reader)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	utils.EnsureStorageFolder()
-	filePath := path.Join("storage", filename)
-
+func HandleFileUpload(filename string, conn net.Conn, isUpload bool) {
+	filePath := GetFilePath(filename)
 	file, err := os.Create(filePath)
 	if err != nil {
-		log.Printf("Failed to create file %s: %v\n", filePath, err)
+		log.Printf("Failed to create file %s: %v\n", filename, err)
 		return
 	}
 	defer file.Close()
 	defer conn.Close()
 	if _, err = io.Copy(file, conn); err != nil {
-		log.Printf("Failed to save file %s: %v\n", filePath, err)
+		log.Printf("Failed to save file %s: %v\n", file.Name(), err)
 		return
 	}
 	log.Printf("File %s received and saved successfully!\n", filename)
@@ -281,7 +273,7 @@ func HandleFileUpload(reader *bufio.Reader, conn net.Conn, isUpload bool) {
 
 	// Notify the master that the file has been uploaded
 	if isUpload {
-		SendUploadSuccessResponse(filename, filePath, int32(remotePort))
+		SendUploadSuccessResponse(filename, file.Name(), int32(remotePort))
 	}
 }
 
@@ -315,13 +307,19 @@ func handleTcpRequest(conn net.Conn) {
 	requestType = strings.TrimSpace(requestType)
 	log.Println("Request type:", requestType)
 
+	filename, err := readFilename(reader)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
 	// Check if it's an upload or download request
 	if requestType == "UPLOAD" {
-		HandleFileUpload(reader, conn, true)
+		HandleFileUpload(filename, conn, true)
 	} else if requestType == "REPLICATE" {
-		HandleFileUpload(reader, conn, false)
+		HandleFileUpload(filename, conn, false)
 	} else if requestType == "DOWNLOAD" {
-		HandleFileDownload(reader, conn)
+		HandleFileDownload(filename, conn)
 	} else {
 		log.Println("Invalid request type:", requestType)
 	}
@@ -329,32 +327,18 @@ func handleTcpRequest(conn net.Conn) {
 }
 
 // HandleFileDownload processes file download requests
-func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
-	filename, err := readFilename(reader)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	filePath := path.Join("storage", filename)
-	fmt.Printf("filePath: %s\n", filePath)
+func HandleFileDownload(filename string, conn net.Conn) {
+	filePath := GetFilePath(filename)
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("File not found: %s\n", filename)
-		sendResponse(conn, "ERROR: File not found")
+		utils.SendResponse(conn, "ERROR: File not found")
 		return
 	}
-
-	log.Printf("Sending file: %s\n", filePath)
-	writer := bufio.NewWriter(conn)
-	// Send file data
-	if _, err = io.Copy(writer, file); err != nil {
-		log.Printf("Error sending file %s: %v\n", filename, err)
-	} else {
-		log.Println("File sent successfully!")
-	}
-
 	defer file.Close()
+
+	log.Printf("Sending file: %s\n", file.Name())
+	utils.WriteFileToConnection(file, conn)
 }
 
 // readFilename reads and trims the filename from the connection
@@ -366,22 +350,8 @@ func readFilename(reader *bufio.Reader) (string, error) {
 	return strings.TrimSpace(filename), nil
 }
 
-// sendResponse writes a message to the connection and flushes it
-func sendResponse(conn net.Conn, message string) error {
-	writer := bufio.NewWriter(conn)
-	_, err := writer.WriteString(message + "\n")
-	if err != nil {
-		return fmt.Errorf("failed to send response: %w", err)
-	}
-	return writer.Flush()
-}
-
-func isPortAvailable(port int) bool {
-	addr := fmt.Sprintf(":%d", port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false // Port is in use
-	}
-	listener.Close() // Close immediately after checking
-	return true      // Port is available
+func GetFilePath(filename string) (string) {
+	utils.EnsureStorageFolder("storage")
+	filePath := path.Join(utils.GetWorkingDir(), "storage", filename)
+	return filePath
 }

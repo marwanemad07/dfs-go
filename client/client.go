@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"dfs/config"
 	pb "dfs/proto"
@@ -26,7 +25,7 @@ func main() {
 	// Ensure there are enough arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Println("Usage: client <upload/download> <filename> [-o outputPath]")
+		fmt.Println("Usage: client [-o outputPath] <upload/download> <filename> ")
 		return
 	}
 
@@ -49,6 +48,7 @@ func main() {
 		if *outputPath == "" {
 			*outputPath = "downloads" 
 		}
+		
 		downloadFile(client, filename, *outputPath)
 	default:
 		fmt.Println("Invalid command. Use 'upload' or 'download'.")
@@ -76,7 +76,12 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 	log.Printf("Uploading to Data Keeper at %s", uploadResp.DataKeeperAddress)
 
 	// Send file to Data Keeper via TCP
-	SendFile(uploadResp.DataKeeperAddress, filename)
+	conn, err := net.Dial("tcp", uploadResp.DataKeeperAddress)
+	if err != nil {
+		log.Fatalf("Failed to connect to Data Keeper: %v", err)
+	}
+	SendFile(filename, conn)
+	defer conn.Close()
 }
 
 // Download logic
@@ -107,43 +112,28 @@ func downloadFile(client pb.MasterTrackerClient, filename string,filePath string
 
 
 // SendFile uploads a file to the server
-func SendFile(address, filename string) {
-	fmt.Println("Uploading file:", filename)
+func SendFile(filename string, conn net.Conn) {
 	// Open the file
-
 	filePath := filepath.Join(utils.GetWorkingDir(), filename)
-	fmt.Println("Uploading file:", filePath,address)
+	
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Fatalf("Failed to open file: %v", err)
+		utils.SendResponse(conn, "ERROR: File not found")
+		return
 	}
 	defer file.Close()
-	// Connect to Data Keeper
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		log.Fatalf("Failed to connect to Data Keeper: %v", err)
-	}
-	defer conn.Close()
-
+	
 	// Send request header
-	if err := sendRequest(conn, "UPLOAD", filename); err != nil {
+	if err := utils.SendRequest(conn, "UPLOAD", filename); err != nil {
 		log.Fatalf("%v", err)
+		return
 	}
 
 	// Send file data
-	writer := bufio.NewWriter(conn)
-	if _, err := io.Copy(writer, file); err != nil {
-		log.Fatalf("Failed to send file data: %v", err)
-	}
-
-	// Ensure all data is sent
-	if err := writer.Flush(); err != nil {
-		log.Fatalf("Failed to flush file data: %v", err)
-	}
-
+	utils.WriteFileToConnection(file, conn)
 	log.Println("Upload complete!")
 }
-
 // ReceiveFile downloads a file from the server
 func ReceiveFile(address, filename, filePath string) {
 	conn, err := net.Dial("tcp", address)
@@ -152,16 +142,12 @@ func ReceiveFile(address, filename, filePath string) {
 	}
 	defer conn.Close()
 
-	// Ensure the directory exists
-	if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
-		log.Fatalf("Failed to create directory: %v", err)
-	}
-
+	utils.EnsureStorageFolder(filePath)
 	// Full path where the file will be saved
 	fullFilePath := filepath.Join(filePath, filename)
 
 	// Send request header
-	if err := sendRequest(conn, "DOWNLOAD", filename); err != nil {
+	if err := utils.SendRequest(conn, "DOWNLOAD", filename); err != nil {
 		log.Fatalf("%v", err)
 	}
 
@@ -178,26 +164,4 @@ func ReceiveFile(address, filename, filePath string) {
 	}
 
 	log.Printf("File received successfully: %s\n", fullFilePath)
-}
-
-// sendRequest sends a request type and filename to the server
-func sendRequest(conn net.Conn, requestType, filename string) error {
-	writer := bufio.NewWriter(conn)
-
-	// Send request type
-	if _, err := writer.WriteString(requestType + "\n"); err != nil {
-		return fmt.Errorf("failed to send request type: %w", err)
-	}
-
-	// Send filename
-	if _, err := writer.WriteString(filename + "\n"); err != nil {
-		return fmt.Errorf("failed to send filename: %w", err)
-	}
-
-	// Flush data
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush request data: %w", err)
-	}
-
-	return nil
 }

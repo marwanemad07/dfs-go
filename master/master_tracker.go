@@ -182,7 +182,6 @@ func (s *MasterTracker) AddFile(dataKeeperName, filename, filePath string) {
 	utils.PrintDataFrame(s.fileTable)
 }
 
-// TODO: Implement this method
 // RequestDownload returns all Data Keepers that store the requested file
 func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadRequest) (*pb.DownloadResponse, error) {
 	s.mu.Lock()
