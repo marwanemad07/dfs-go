@@ -330,14 +330,14 @@ func handleTcpRequest(conn net.Conn) {
 
 // HandleFileDownload processes file download requests
 func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
-
 	filename, err := readFilename(reader)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	filePath := "storage/" + filename
+	filePath := path.Join("storage", filename)
+	fmt.Printf("filePath: %s\n", filePath)
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("File not found: %s\n", filename)
@@ -345,16 +345,10 @@ func HandleFileDownload(reader *bufio.Reader, conn net.Conn) {
 		return
 	}
 
-	log.Printf("Sending file: %s\n", filename)
-
-	// Notify client before sending file data
-	if err := sendResponse(conn, "OK"); err != nil {
-		log.Println(err)
-		return
-	}
-
+	log.Printf("Sending file: %s\n", filePath)
+	writer := bufio.NewWriter(conn)
 	// Send file data
-	if _, err = io.Copy(conn, file); err != nil {
+	if _, err = io.Copy(writer, file); err != nil {
 		log.Printf("Error sending file %s: %v\n", filename, err)
 	} else {
 		log.Println("File sent successfully!")

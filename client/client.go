@@ -6,6 +6,7 @@ import (
 	"dfs/config"
 	pb "dfs/proto"
 	"dfs/utils"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -17,15 +18,20 @@ import (
 
 	"google.golang.org/grpc"
 )
-
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: client <upload/download> <filename>")
+	// Define flags
+	outputPath := flag.String("o", "", "Output path for downloaded file")
+	flag.Parse()
+
+	// Ensure there are enough arguments
+	args := flag.Args()
+	if len(args) < 2 {
+		fmt.Println("Usage: client <upload/download> <filename> [-o outputPath]")
 		return
 	}
 
-	command := os.Args[1]
-	filename := os.Args[2]
+	command := args[0]
+	filename := args[1]
 
 	// Connect to the Master Tracker
 	serverPort := config.LoadConfig("config.json").Server.Port
@@ -40,7 +46,10 @@ func main() {
 	case "upload":
 		uploadFile(client, filename)
 	case "download":
-		downloadFile(client, filename)
+		if *outputPath == "" {
+			*outputPath = "downloads" 
+		}
+		downloadFile(client, filename, *outputPath)
 	default:
 		fmt.Println("Invalid command. Use 'upload' or 'download'.")
 	}
@@ -71,38 +80,31 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 }
 
 // Download logic
-func downloadFile(client pb.MasterTrackerClient, filename string) {
+func downloadFile(client pb.MasterTrackerClient, filename string,filePath string) {
 	fmt.Println("Downloading file:", filename)
-	dir, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Failed to get current directory: %v", err)
-	}
-	fullPath := filepath.Join(dir, filename)
 
 	// Request file locations from Master Tracker
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: fullPath})
+	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
 	if err != nil {
 		log.Fatalf("Error requesting download: %v", err)
 	}
-
-	if len(downloadResp.DataKeeperAddresses) == 0 {
+	lenOFDataKeeperAddresses := len(downloadResp.DataKeeperAddresses)
+	if lenOFDataKeeperAddresses == 0 {
+		// TODO: Should request to download after some time or tell user to try again later
 		log.Fatalf("No Data Keeper has the requested file: %s", filename)
 	}
 
-	// Select the first available Data Keeper
-	dataKeeperPort := downloadResp.DataKeeperAddresses[0]
-	dataKeeperAddr := getAddress(dataKeeperPort) // "localhost:" need to parameter read from config file
-	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddr)
+	// Choose a random Data Keeper uniformaly to download from
+	index := utils.GetRandomIndex(lenOFDataKeeperAddresses)
+	dataKeeperAddress := downloadResp.DataKeeperAddresses[index]
+	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddress)
 
 	// Request and receive file via TCP
-	ReceiveFile(dataKeeperAddr, filename)
+	ReceiveFile(dataKeeperAddress, filename,filePath)
 }
 
-func getAddress(port string) string {
-	return "localhost:" + port
-}
 
 // SendFile uploads a file to the server
 func SendFile(address, filename string) {
@@ -143,33 +145,28 @@ func SendFile(address, filename string) {
 }
 
 // ReceiveFile downloads a file from the server
-func ReceiveFile(address, filename string) {
+func ReceiveFile(address, filename, filePath string) {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		log.Fatalf("Failed to connect to Data Keeper: %v", err)
 	}
 	defer conn.Close()
 
+	// Ensure the directory exists
+	if err := os.MkdirAll(filePath, os.ModePerm); err != nil {
+		log.Fatalf("Failed to create directory: %v", err)
+	}
+
+	// Full path where the file will be saved
+	fullFilePath := filepath.Join(filePath, filename)
+
 	// Send request header
 	if err := sendRequest(conn, "DOWNLOAD", filename); err != nil {
 		log.Fatalf("%v", err)
 	}
 
-	// Read server response
-	reader := bufio.NewReader(conn)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatalf("Failed to read server response: %v", err)
-	}
-
-	// Check if the server returned an error
-	if strings.HasPrefix(response, "ERROR") {
-		log.Printf("Server error: %s", response)
-		return
-	}
-
-	// Create the file
-	file, err := os.Create(filename)
+	// Create the file in the specified directory
+	file, err := os.Create(fullFilePath)
 	if err != nil {
 		log.Fatalf("Failed to create file: %v", err)
 	}
@@ -180,7 +177,7 @@ func ReceiveFile(address, filename string) {
 		log.Fatalf("Error receiving file: %v", err)
 	}
 
-	log.Println("File received successfully.")
+	log.Printf("File received successfully: %s\n", fullFilePath)
 }
 
 // sendRequest sends a request type and filename to the server

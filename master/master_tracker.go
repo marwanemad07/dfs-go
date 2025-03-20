@@ -10,15 +10,10 @@ import (
 	"log"
 	"math/rand"
 	"strings"
-
-	//"math/rand"
 	"net"
 	"strconv"
 	"sync"
 	"time"
-
-	// "dfs/utils"
-	// "dfs/config"
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 	"google.golang.org/grpc"
@@ -93,8 +88,8 @@ func (s *MasterTracker) GetRandomAvailablePort(dataKeeperName string, portType i
 		return 0, fmt.Errorf("no available ports for dataKeeper %s", dataKeeperName)
 	}
 
-	rand.Seed(time.Now().UnixNano()) // Seed the random number generator
-	return availablePorts[rand.Intn(len(availablePorts))], nil
+	index := utils.GetRandomIndex(len(availablePorts))
+	return availablePorts[index], nil
 }
 
 func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
@@ -119,7 +114,7 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 
 	log.Printf("[UPLOAD] File assigned to Data Keeper: %s", selectedDataKeeperName)
 	selectedDataKeeperPort, _ := s.GetRandomAvailablePort(selectedDataKeeperName, TCP)
-	s.SetPortAvailability(selectedDataKeeperName, selectedDataKeeperPort, TCP, false)
+	// s.SetPortAvailability(selectedDataKeeperName, selectedDataKeeperPort, TCP, false)
 	selectedDataKeeperAdress := s.dataKeeperInfo[selectedDataKeeperName].Address + ":" + strconv.Itoa(selectedDataKeeperPort)
 	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeperAdress}, nil
 }
@@ -168,8 +163,8 @@ func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUp
 	defer s.mu.Unlock()
 
 	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath)
-	s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
-	fmt.Println("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
+	// s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
+	fmt.Printf("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
 	s.performReplication()
 	return &emptypb.Empty{}, nil
 }
@@ -205,7 +200,24 @@ func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadReq
 	}
 
 	dataKeepers := filtered.Col("dataKeeperName").Records()
-	return &pb.DownloadResponse{DataKeeperAddresses: dataKeepers}, nil
+	log.Printf("Data Keepers: %v %v", dataKeepers,s.dataKeeperInfo)
+	dataKeepersAddresses := s.FormatNodeAdresses(dataKeepers)
+	log.Printf("[DOWNLOAD] File %s found on Data Keepers: %v", req.Filename, dataKeepersAddresses)
+	return &pb.DownloadResponse{DataKeeperAddresses: dataKeepersAddresses}, nil
+}
+
+func (s *MasterTracker) FormatNodeAdresses(dataKeepers []string) ([]string) {
+	dataKeeperAddresses := make ([]string, 0)
+	for _, dataKeeper := range dataKeepers {
+		address := s.dataKeeperInfo[dataKeeper].Address
+		for _, port := range s.dataKeeperInfo[dataKeeper].PortsTCP {
+			if port.IsAvailable {
+				dataKeeperAddresses = append(dataKeeperAddresses, address + ":" + strconv.Itoa(int(port.PortNumber)))
+				break
+			}
+		}
+	}
+	return dataKeeperAddresses
 }
 
 // marks the given Data Keeper as down if its last heartbeat is older than the timeout.
@@ -234,7 +246,7 @@ func (s *MasterTracker) markDataKeeperDown(dk string) {
 			s.fileTable.Elem(i, 3).Set("false") // Column 3 = "isAlive"
 		}
 	}
-
+	log.Printf("[INFO] Updated fileTable after marking Data Keeper %s as DOWN", s.fileTable)
 	// Remove and stop the timer for this Data Keeper.
 	if timer, exists := s.nodeTimers[dk]; exists {
 		timer.Stop()
@@ -357,7 +369,7 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
 	}
 	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath)
-	s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
+	// s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
 	defer conn.Close()
 	defer cancel()
 	return err

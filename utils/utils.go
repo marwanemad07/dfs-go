@@ -2,10 +2,12 @@ package utils
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-gota/gota/dataframe"
 )
@@ -82,4 +84,9 @@ func ExtractPort(addr string) (int, error) {
 		return 0, err
 	}
 	return port, nil
+}
+
+func GetRandomIndex(length int) int {
+	rand.Seed(time.Now().UnixNano())
+	return rand.Intn(length)
 }
