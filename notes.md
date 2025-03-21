@@ -10,7 +10,7 @@
 - For the datakeeper that should upload the file, we can take the one with larger available storage _ 0.7 + number of available ports _ 0.3. Now we are taking random one
 - download in parall
 ### Bugs
-
+- file deleted crush
 ### Atef tasks:
 
 - images:

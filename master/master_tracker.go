@@ -188,9 +188,11 @@ func (s *MasterTracker) RequestDownload(ctx context.Context, req *pb.DownloadReq
 	defer s.mu.Unlock()
 
 	// Filter file table to get all Data Keepers storing the requested file
-	filtered := s.fileTable.Filter(
-		dataframe.F{Colname: "filename", Comparator: "==", Comparando: req.Filename},
-		dataframe.F{Colname: "isAlive", Comparator: "==", Comparando: "true"}, // Ensure Data Keeper is alive
+
+	filtered := s.fileTable.FilterAggregation(
+		dataframe.And,
+		dataframe.F{Colname: "filename", Comparator: series.Eq, Comparando: req.Filename},
+		dataframe.F{Colname: "isAlive", Comparator: series.Eq, Comparando: true}, // Ensure Data Keeper is alive
 	)
 
 	if filtered.Nrow() == 0 {
@@ -242,7 +244,7 @@ func (s *MasterTracker) markDataKeeperDown(dk string) {
 	// Update "isAlive" column in fileTable to "false" for this Data Keeper.
 	for i := 0; i < s.fileTable.Nrow(); i++ {
 		if s.fileTable.Elem(i, 0).String() == dk { // Column 0 = "dataKeeperName"
-			s.fileTable.Elem(i, 3).Set("false") // Column 3 = "isAlive"
+			s.fileTable.Elem(i, 3).Set(false) // Column 3 = "isAlive"
 		}
 	}
 	log.Printf("[INFO] Updated fileTable after marking Data Keeper %s as DOWN", s.fileTable)
@@ -307,21 +309,21 @@ func (s *MasterTracker) performReplication() {
 	}
 	log.Printf("[REPLICATION] Replicating files names: %v", filenames)
 	for _, filename := range filenames {
-		filtered := s.fileTable.Filter(
-			dataframe.F{Colname: "filename", Comparator: "==", Comparando: filename},
-			dataframe.F{Colname: "isAlive", Comparator: "==", Comparando: "true"},
+		filtered := s.fileTable.FilterAggregation(
+			dataframe.And,
+			dataframe.F{Colname: "filename", Comparator: series.Eq, Comparando: filename},
+			dataframe.F{Colname: "isAlive", Comparator: series.Eq, Comparando: true},
 		)
 		currentCount := filtered.Nrow()
-
 		if currentCount < 3 {
 			sources := filtered.Col("dataKeeperName").Records()
-			fmt.Println("currentCount: ", currentCount)
+
 			source := sources[0]
 			remainingDataKeepers := 3 - currentCount
 			possibleDests := s.getPossibleDestinations(filtered)
 
 			if len(possibleDests) == 0 {
-				return
+				continue
 			}
 			
 			if len(possibleDests) < remainingDataKeepers {

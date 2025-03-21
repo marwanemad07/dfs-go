@@ -102,21 +102,21 @@ func SendResponse(conn net.Conn, message string) error {
 	return writer.Flush()
 }
 
-// sendRequest sends a request type and filename to the server
-func SendRequest(conn net.Conn, requestType, filename string) error {
+// SendRequest sends multiple request fields to the server.
+func SendRequest(conn net.Conn, fields ...string) error {
+	if len(fields) == 0 {
+		return fmt.Errorf("at least one field must be provided")
+	}
+
 	writer := bufio.NewWriter(conn)
 
-	// Send request type
-	if _, err := writer.WriteString(requestType + "\n"); err != nil {
-		return fmt.Errorf("failed to send request type: %w", err)
+	// Combine all fields with newline separation
+	message := strings.Join(fields, "\n") + "\n"
+
+	if _, err := writer.WriteString(message); err != nil {
+		return fmt.Errorf("failed to send request (%v): %w", fields, err)
 	}
 
-	// Send filename
-	if _, err := writer.WriteString(filename + "\n"); err != nil {
-		return fmt.Errorf("failed to send filename: %w", err)
-	}
-
-	// Flush data
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("failed to flush request data: %w", err)
 	}
@@ -124,7 +124,8 @@ func SendRequest(conn net.Conn, requestType, filename string) error {
 	return nil
 }
 
-func WriteFileToConnection (file *os.File, conn net.Conn) {
+
+func WriteFileToConnection(file *os.File, conn net.Conn) {
 	writer := bufio.NewWriter(conn)
 	if _, err := io.Copy(writer, file); err != nil {
 		log.Fatalf("Failed to send file data: %v", err)
@@ -144,4 +145,34 @@ func IsPortAvailable(port int) bool {
 	}
 	listener.Close() // Close immediately after checking
 	return true      // Port is available
+}
+func ShowProgress(progress <-chan int64, totalSize int64) {
+	const barWidth = 50
+	var received int64
+	lastUpdate := time.Now()
+
+	for r := range progress {
+		received = r
+
+		// Limit UI updates to avoid excessive printing.
+		if time.Since(lastUpdate) >= 100*time.Millisecond {
+			lastUpdate = time.Now()
+			printProgress(received, totalSize, barWidth)
+		}
+	}
+
+	// Ensure the final 100% update
+	fmt.Printf("\r")
+	printProgress(totalSize, totalSize, barWidth)
+	fmt.Print("\n✅ Download complete!\n")
+}
+
+// printProgress displays the download progress bar and percentage.
+func printProgress(received, totalSize int64, barWidth int) {
+	percentage := float64(received) / float64(totalSize) * 100
+	filled := int(float64(barWidth) * percentage / 100)
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("-", barWidth-filled)
+
+	fmt.Printf("\r[%s] %.2f%% (%d/%d MB)", bar, percentage, received/1024/1024, totalSize/1024/1024)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"dfs/config"
 	pb "dfs/proto"
 	"dfs/utils"
@@ -12,11 +13,11 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -41,8 +42,8 @@ type Globals struct {
 var globals = &Globals{}
 
 func main() {
-	if len(os.Args) < 4 {
-		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports>  ...")
+	if len(os.Args) < 5 {
+		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports> <node_name> ...")
 		return
 	}
 
@@ -126,7 +127,7 @@ func main() {
 
 	dataKeeperServer.SetPorts(tcpPorts, grpcPorts)
 
-	nodeName := uuid.New().String()
+	nodeName := os.Args[4]
 	globals.masterAddress = masterAddress
 	globals.nodeName = nodeName
 	globals.nodeAddress = nodeAddress
@@ -273,7 +274,8 @@ func HandleFileUpload(filename string, conn net.Conn, isUpload bool) {
 
 	// Notify the master that the file has been uploaded
 	if isUpload {
-		SendUploadSuccessResponse(filename, file.Name(), int32(remotePort))
+		relativePath := path.Join("storage" , filepath.Base(file.Name()))
+		SendUploadSuccessResponse(filename, relativePath, int32(remotePort))
 	}
 }
 
@@ -299,7 +301,6 @@ func handleTcpRequest(conn net.Conn) {
 
 	// Read request type (Upload or Download)
 	requestType, err := reader.ReadString('\n')
-	log.Printf("Request type: %s", requestType)
 	if err != nil {
 		log.Println("Failed to read request type:", err)
 		return
@@ -323,7 +324,7 @@ func handleTcpRequest(conn net.Conn) {
 	} else {
 		log.Println("Invalid request type:", requestType)
 	}
-	defer conn.Close()
+	conn.Close()
 }
 
 // HandleFileDownload processes file download requests
@@ -338,6 +339,17 @@ func HandleFileDownload(filename string, conn net.Conn) {
 	defer file.Close()
 
 	log.Printf("Sending file: %s\n", file.Name())
+	fileInfo, _ := file.Stat()
+	fmt.Println("File size:", fileInfo.Size())
+	file.Seek(0, io.SeekStart)
+
+	hasher := sha256.New()
+	io.Copy(hasher, file)
+	checksum := fmt.Sprintf("%x", hasher.Sum(nil))
+		file.Seek(0, io.SeekStart)
+
+	utils.SendResponse(conn, checksum)
+	utils.SendResponse(conn, strconv.FormatInt(fileInfo.Size(), 10))
 	utils.WriteFileToConnection(file, conn)
 }
 

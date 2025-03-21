@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"dfs/config"
 	pb "dfs/proto"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,7 +83,7 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 		log.Fatalf("Failed to connect to Data Keeper: %v", err)
 	}
 	SendFile(filename, conn)
-	defer conn.Close()
+	conn.Close()
 }
 
 // Download logic
@@ -89,7 +91,7 @@ func downloadFile(client pb.MasterTrackerClient, filename string,filePath string
 	fmt.Println("Downloading file:", filename)
 
 	// Request file locations from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(),30* time.Second)
 	defer cancel()
 	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
 	if err != nil {
@@ -143,25 +145,82 @@ func ReceiveFile(address, filename, filePath string) {
 	defer conn.Close()
 
 	utils.EnsureStorageFolder(filePath)
-	// Full path where the file will be saved
+
 	fullFilePath := filepath.Join(filePath, filename)
 
-	// Send request header
 	if err := utils.SendRequest(conn, "DOWNLOAD", filename); err != nil {
-		log.Fatalf("%v", err)
+		log.Fatalf("Failed to send download request: %v", err)
 	}
 
-	// Create the file in the specified directory
 	file, err := os.Create(fullFilePath)
 	if err != nil {
 		log.Fatalf("Failed to create file: %v", err)
 	}
-	defer file.Close()
 
-	// Receive and save file data
-	if _, err := io.Copy(file, conn); err != nil {
-		log.Fatalf("Error receiving file: %v", err)
+	checksum, err := getResponse(conn)
+	totalSizeStr, _ := getResponse(conn)
+	totalSize,_ := strconv.ParseInt(totalSizeStr, 10, 64)
+	log.Printf("File size: %d bytes, Checksum: %s\n", totalSize, checksum)
+	if err != nil {
+		log.Fatalf("Failed to read file size: %v", err)
 	}
 
-	log.Printf("File received successfully: %s\n", fullFilePath)
+	receiveAndSaveFile(conn, file, totalSize)
+}
+
+// getFileSize reads the expected file size from the server.
+func getResponse(conn net.Conn) (string, error) {
+	reader := bufio.NewReader(conn)
+	str, err := reader.ReadString('\n')
+	if err != nil {
+		return "0", fmt.Errorf("failed to read Response: %w", err)
+	}
+	str = strings.TrimSpace(str)
+	return str, err
+}
+
+func receiveAndSaveFile(conn net.Conn, file *os.File, totalSize int64) error {
+	progress := make(chan int64)
+	defer file.Close()
+
+	// Show download progress in a separate goroutine
+	go utils.ShowProgress(progress, totalSize)
+
+	reader := bufio.NewReader(conn)
+	buffer := make([]byte, 4096) // Use a reasonable buffer size (4 KB)
+	var received int64
+
+	for received < totalSize {
+		toRead := int64(len(buffer))
+		if remaining := totalSize - received; remaining < toRead {
+			toRead = remaining
+		}
+
+		// Read exactly `toRead` bytes
+		n, err := io.ReadFull(reader, buffer[:toRead])
+		if n > 0 {
+			if _, writeErr := file.Write(buffer[:n]); writeErr != nil {
+				return fmt.Errorf("failed to write to file: %w", writeErr)
+			}
+			received += int64(n)
+			progress <- received
+		}
+
+		if err == io.EOF {
+			break // End of file reached
+		}
+
+		if err != nil && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("error while receiving file: %w", err)
+		}
+	}
+
+	close(progress)
+
+	// Validate that we received the full file
+	if received != totalSize {
+		return fmt.Errorf("incomplete file received. Expected %d bytes, got %d bytes", totalSize, received)
+	}
+
+	return nil
 }
