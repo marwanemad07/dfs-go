@@ -38,3 +38,10 @@
 - You can check the files uploaded in the container using `docker exec -it <container_name_or_id> /bin/sh` to log into the container with the terminal then run linux commands like `ls storage` to check the uploaded files. Use `ctrl + d` to close the container.
 - You can use `docker container stop $(docker ps -a -q)` to stop all running containers
 - You can use `docker container rm $(docker ps -a -q)` to remove all stopped containers
+
+## Network
+- `ipconfig` to see the machine's IP
+- `CTRL + R` then `wf.msc` then enable rule `File and Printer Sharing (Echo Request - ICMPv4-In) Private, Public`
+- use `ping` to make sure the connection is established
+- add data address & master address in datakeeper code line 62 & 63
+- may need to change timeout
