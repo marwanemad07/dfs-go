@@ -59,8 +59,8 @@ func main() {
 		masterAddress = "host.docker.internal"
 		nodeAddress = "host.docker.internal"
 	case "network":
-		masterAddress, _ = utils.GetLocalIP()
-		nodeAddress, _ = utils.GetLocalIP()
+		masterAddress = "192.168.195.142" //utils.GetLocalIP()//"192.168.195.142" // dynamic
+		nodeAddress = "192.168.195.19" //utils.GetLocalIP()//"192.168.195.19" // dynamic
 	default:
 		fmt.Println("Invalid mode. Use 'local' or 'docker'.")
 		os.Exit(1)
@@ -146,7 +146,7 @@ func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.Replicatio
 	filename := req.Filename
 	destinationAddress := req.DestinationAddress
 	wd, _ := os.Getwd()
-	filePath := path.Join( "storage", req.Filename)
+	filePath := path.Join("storage", req.Filename)
 	absolutepath := path.Join(wd, filePath)
 
 	log.Printf("[DATA KEEPER] Replicating file %s to %s", filename, destinationAddress)
@@ -237,7 +237,7 @@ func startTCPServer(portStatus *pb.PortStatus) {
 // notify master that this data node is alive
 func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress string, portsTcp []*pb.PortStatus, portsGrpc []*pb.PortStatus) {
 	// Context with 1-second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute * 10)
 	defer cancel() // Ensure resources are freed
 
 	// Send heartbeat message
@@ -274,7 +274,7 @@ func HandleFileUpload(filename string, conn net.Conn, isUpload bool) {
 
 	// Notify the master that the file has been uploaded
 	if isUpload {
-		relativePath := path.Join("storage" , filepath.Base(file.Name()))
+		relativePath := path.Join("storage", filepath.Base(file.Name()))
 		SendUploadSuccessResponse(filename, relativePath, int32(remotePort))
 	}
 }
@@ -345,10 +345,9 @@ func HandleFileDownload(filename string, conn net.Conn) {
 
 	hasher := sha256.New()
 	io.Copy(hasher, file)
-	checksum := fmt.Sprintf("%x", hasher.Sum(nil))
-		file.Seek(0, io.SeekStart)
+	// checksum := fmt.Sprintf("%x", hasher.Sum(nil))
+	file.Seek(0, io.SeekStart)
 
-	utils.SendResponse(conn, checksum)
 	utils.SendResponse(conn, strconv.FormatInt(fileInfo.Size(), 10))
 	utils.WriteFileToConnection(file, conn)
 }
@@ -362,7 +361,7 @@ func readFilename(reader *bufio.Reader) (string, error) {
 	return strings.TrimSpace(filename), nil
 }
 
-func GetFilePath(filename string) (string) {
+func GetFilePath(filename string) string {
 	utils.EnsureStorageFolder("storage")
 	filePath := path.Join(utils.GetWorkingDir(), "storage", filename)
 	return filePath
