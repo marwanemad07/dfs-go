@@ -68,7 +68,7 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 
 
 	// Request Data Keeper from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: filename})
 	if err != nil {
@@ -91,7 +91,7 @@ func downloadFile(client pb.MasterTrackerClient, filename string,filePath string
 	fmt.Println("Downloading file:", filename)
 
 	// Request file locations from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(),30* time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(),10*time.Minute)
 	defer cancel()
 	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
 	if err != nil {
@@ -157,10 +157,9 @@ func ReceiveFile(address, filename, filePath string) {
 		log.Fatalf("Failed to create file: %v", err)
 	}
 
-	checksum, err := getResponse(conn)
-	totalSizeStr, _ := getResponse(conn)
+	totalSizeStr, err := getResponse(conn)
 	totalSize,_ := strconv.ParseInt(totalSizeStr, 10, 64)
-	log.Printf("File size: %d bytes, Checksum: %s\n", totalSize, checksum)
+	log.Printf("File size: %d bytes\n", totalSize)
 	if err != nil {
 		log.Fatalf("Failed to read file size: %v", err)
 	}

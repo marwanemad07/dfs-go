@@ -48,7 +48,7 @@ type MasterTracker struct {
 
 func NewMasterTracker() *MasterTracker {
 	cfg := config.LoadConfig("config.json")
-	heartbeatTimeout := time.Duration(cfg.DataKeeper.HeartbeatTimeout) * time.Second
+	heartbeatTimeout := time.Duration(cfg.DataKeeper.HeartbeatTimeout) * time.Second + 200*time.Millisecond
 
 	df := dataframe.New(
 		series.New([]string{}, series.String, "dataKeeperName"),
@@ -317,7 +317,9 @@ func (s *MasterTracker) performReplication() {
 		currentCount := filtered.Nrow()
 		if currentCount < 3 {
 			sources := filtered.Col("dataKeeperName").Records()
-
+			// if (len(sources) == 0) {
+			// 	continue
+			// }
 			source := sources[0]
 			remainingDataKeepers := 3 - currentCount
 			possibleDests := s.getPossibleDestinations(filtered)
