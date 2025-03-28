@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"dfs/config"
 	pb "dfs/proto"
 	"dfs/utils"
@@ -345,10 +344,9 @@ func HandleFileDownload(filename string, conn net.Conn) {
 	log.Printf("Sending file: %s\n", file.Name())
 	fileInfo, _ := file.Stat()
 	fmt.Println("File size:", fileInfo.Size())
-	file.Seek(0, io.SeekStart)
 
-	hasher := sha256.New()
-	io.Copy(hasher, file)
+	// hasher := sha256.New()
+	// io.Copy(hasher, file)
 	// checksum := fmt.Sprintf("%x", hasher.Sum(nil))
 	file.Seek(0, io.SeekStart)
 

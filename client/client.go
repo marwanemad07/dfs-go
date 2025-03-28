@@ -142,8 +142,10 @@ func SendFile(filename string, conn net.Conn) {
 }
 
 // ReceiveFile downloads a file from the server
-func ReceiveFile(address, filename, filePath string) {
+func ReceiveFile(address string, filename string, filePath string) {
 	conn, err := net.Dial("tcp", address)
+	reader := bufio.NewReader(conn)
+
 	if err != nil {
 		log.Fatalf("Failed to connect to Data Keeper: %v", err)
 	}
@@ -162,19 +164,18 @@ func ReceiveFile(address, filename, filePath string) {
 		log.Fatalf("Failed to create file: %v", err)
 	}
 
-	totalSizeStr, err := getResponse(conn)
+	totalSizeStr, err := getResponse(reader)
 	totalSize,_ := strconv.ParseInt(totalSizeStr, 10, 64)
 	log.Printf("File size: %d bytes\n", totalSize)
 	if err != nil {
 		log.Fatalf("Failed to read file size: %v", err)
 	}
 
-	receiveAndSaveFile(conn, file, totalSize)
+	receiveAndSaveFile(reader, file, totalSize)
 }
 
 // getFileSize reads the expected file size from the server.
-func getResponse(conn net.Conn) (string, error) {
-	reader := bufio.NewReader(conn)
+func getResponse(reader *bufio.Reader) (string, error) {
 	str, err := reader.ReadString('\n')
 	if err != nil {
 		return "0", fmt.Errorf("failed to read Response: %w", err)
@@ -183,14 +184,13 @@ func getResponse(conn net.Conn) (string, error) {
 	return str, err
 }
 
-func receiveAndSaveFile(conn net.Conn, file *os.File, totalSize int64) error {
+func receiveAndSaveFile(reader *bufio.Reader, file *os.File, totalSize int64) error {
 	progress := make(chan int64)
 	defer file.Close()
 
 	// Show download progress in a separate goroutine
 	go utils.ShowProgress(progress, totalSize)
 
-	reader := bufio.NewReader(conn)
 	buffer := make([]byte, 4096) // Use a reasonable buffer size (4 KB)
 	var received int64
 

@@ -317,9 +317,9 @@ func (s *MasterTracker) performReplication() {
 		currentCount := filtered.Nrow()
 		if currentCount < 3 {
 			sources := filtered.Col("dataKeeperName").Records()
-			// if (len(sources) == 0) {
-			// 	continue
-			// }
+			if (len(sources) == 0) {
+				continue
+			}
 			source := sources[0]
 			remainingDataKeepers := 3 - currentCount
 			possibleDests := s.getPossibleDestinations(filtered)

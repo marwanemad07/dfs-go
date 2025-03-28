@@ -49,4 +49,4 @@
 ## commands
 - `protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative dfs.proto`
 - `go run .\master\master_tracker.go`
-- ` go run .\datanode\data_keeper.go local 1 5000 node1`
+- `go run .\datanode\data_keeper.go local 1 5000 node1`
