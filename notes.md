@@ -2,6 +2,7 @@
 
 1. Unique File names on the same datanode  (checksum)
 2. set avilability 
+3. try again in downloades and uploads 
 ### Enhancements
 
 - For the datakeeper that should upload the file, we can take the one with larger available storage _ 0.7 + number of available ports _ 0.3. Now we are taking random one

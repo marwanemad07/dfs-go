@@ -96,7 +96,6 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// TODO: Validate file extension
 	if !strings.HasSuffix(strings.ToLower(req.Filename), ".mp4") {
 		return nil, fmt.Errorf("only MP4 files are allowed for upload")
 	}

@@ -207,7 +207,6 @@ func (s *DataKeeperServer) startHeartbeat(masterAddress string, dataNodeAddress 
 	client := pb.NewMasterTrackerClient(conn)
 
 	// send heartbeat every second till process stops
-	// TODO: We need here to use alternative to time.Sleep (events) :: EMAD
 	for {
 		sendHeartbeat(client, name, dataNodeAddress, s.portsTcp, s.portsGrpc)
 		time.Sleep(1 * time.Second)

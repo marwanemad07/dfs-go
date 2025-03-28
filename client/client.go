@@ -145,7 +145,6 @@ func downloadFile(client pb.MasterTrackerClient, filename string,filePath string
 	}
 	lenOFDataKeeperAddresses := len(downloadResp.DataKeeperAddresses)
 	if lenOFDataKeeperAddresses == 0 {
-		// TODO: Should request to download after some time or tell user to try again later
 		log.Fatalf("No Data Keeper has the requested file: %s", filename)
 	}
 
