@@ -124,7 +124,6 @@ func SendRequest(conn net.Conn, fields ...string) error {
 	return nil
 }
 
-
 func WriteFileToConnection(file *os.File, conn net.Conn) (int64, error) {
 	writer := bufio.NewWriter(conn)
 
@@ -194,4 +193,33 @@ func printProgress(received, totalSize int64, barWidth int) {
 	bar := strings.Repeat("█", filled) + strings.Repeat("-", barWidth-filled)
 
 	fmt.Printf("\r[%s] %.2f%% (%d/%d MB)", bar, percentage, received/1024/1024, totalSize/1024/1024)
+}
+
+func GetWiFiIPv4() (string, error) {
+	// Wi-Fi interface name on Windows (common default is "Wi-Fi")
+	wifiInterfaceName := "Wi-Fi" // Adjust if needed (run listInterfaces() to confirm)
+
+	// Get the specific interface
+	iface, err := net.InterfaceByName(wifiInterfaceName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get Wi-Fi interface %s: %v", wifiInterfaceName, err)
+	}
+
+	// Get addresses for the interface
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", fmt.Errorf("failed to get addresses for %s: %v", wifiInterfaceName, err)
+	}
+
+	// Find the first IPv4 address
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			// Check if it's IPv4 and not a loopback address
+			if ipNet.IP.To4() != nil && !ipNet.IP.IsLoopback() {
+				return ipNet.IP.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IPv4 address found for Wi-Fi interface %s", wifiInterfaceName)
 }

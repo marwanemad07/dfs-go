@@ -6,6 +6,7 @@ import (
 	"dfs/config"
 	pb "dfs/proto"
 	"dfs/utils"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -41,25 +42,24 @@ type Globals struct {
 var globals = &Globals{}
 
 func main() {
+	masterAddress := *flag.String("m", "localhost", "master address")
+
 	if len(os.Args) < 5 {
 		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports> <node_name> ...")
 		return
 	}
 
 	// Start TCP Server for receiving files
-	masterAddress := ""
 	nodeAddress := ""
 
 	switch os.Args[1] {
 	case "local":
-		masterAddress = "localhost"
 		nodeAddress = "localhost"
 	case "docker":
 		masterAddress = "host.docker.internal"
 		nodeAddress = "host.docker.internal"
 	case "network":
-		masterAddress = "192.168.195.142" //utils.GetLocalIP()//"192.168.195.142" // dynamic
-		nodeAddress = "192.168.195.19" //utils.GetLocalIP()//"192.168.195.19" // dynamic
+		nodeAddress,_ = utils.GetWiFiIPv4()
 	default:
 		fmt.Println("Invalid mode. Use 'local' or 'docker'.")
 		os.Exit(1)
@@ -254,9 +254,9 @@ func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress s
 }
 
 // HandleFileUpload processes file uploads from the client
-func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUpload bool) {
-	if !isUpload{
-		filename = globals.nodeName + filename 
+func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUpload bool, clientAddress ...string) {
+	if !isUpload {
+		filename = globals.nodeName + filename
 	}
 	filePath := GetFilePath(filename)
 	file, err := os.Create(filePath)
@@ -272,24 +272,33 @@ func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUp
 		log.Print("File size:", size)
 	}
 	log.Printf("File %s received and saved successfully!\n", filename)
-	remoteAddr := conn.RemoteAddr().String()
-	remotePort, _ := utils.ExtractPort(remoteAddr)
 
 	// Notify the master that the file has been uploaded
 	if isUpload {
+		remoteAddr := ""
+		if(len(clientAddress) > 0) {
+			remoteAddr = clientAddress[0]
+		} else{
+			log.Println("Client address not provided")
+			return
+		}
+
 		relativePath := path.Join("storage", filepath.Base(file.Name()))
-		SendUploadSuccessResponse(filename, relativePath, int32(remotePort))
+		SendUploadSuccessResponse(filename, relativePath, remoteAddr)
 	}
 }
 
-func SendUploadSuccessResponse(filename, filePath string, portNumber int32) {
+func SendUploadSuccessResponse(filename, filePath string, address string) {
+	portNumber, _ := utils.ExtractPort(address)
+	fmt.Println("address:", address)	
 	conn, err := grpc.Dial(globals.masterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	client := pb.NewMasterTrackerClient(conn)
 	_, err = client.RequestUploadSuccess(context.Background(), &pb.FileUploadSuccess{
 		DataKeeperName: globals.nodeName,
 		Filename:       filename,
 		FilePath:       filePath,
-		PortNumber:     portNumber,
+		PortNumber:     int32(portNumber),
+		ClientAddress:        address,
 	})
 	if err != nil {
 		log.Printf("Failed to notify master about file upload: %v\n", err)
@@ -318,8 +327,9 @@ func handleTcpRequest(conn net.Conn) {
 	}
 
 	// Check if it's an upload or download request
-	if requestType == "UPLOAD" {
-		HandleFileUpload(filename, reader, conn, true)
+	if strings.HasPrefix(requestType, "UPLOAD") {
+		address := strings.Split(requestType, "#")[1]
+		HandleFileUpload(filename, reader, conn, true, address)
 	} else if requestType == "REPLICATE" {
 		HandleFileUpload(filename, reader, conn, false)
 	} else if requestType == "DOWNLOAD" {

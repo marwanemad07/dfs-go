@@ -21,6 +21,10 @@ service DataKeeper {
   rpc ReplicateFile(ReplicationRequest) returns (FileUploadSuccess);
 }
 
+service Client {
+  rpc NotifyUploadCompletion(UploadSuccessResponse) returns (google.protobuf.Empty);
+}
+
 message ReplicationRequest {
   string filename = 1;
   string destinationAddress = 2;
@@ -39,6 +43,7 @@ message FileUploadSuccess {
   string filename = 2;
   string filePath = 3;
   int32 portNumber = 4;
+  string clientAddress = 5;
 }
 
 message UploadSuccessResponse {

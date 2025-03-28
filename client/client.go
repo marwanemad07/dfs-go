@@ -18,47 +18,92 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+type Client struct {
+	pb.UnimplementedClientServer
+	done chan struct{} // Add a channel to signal completion
+}
+
 func main() {
 	// Define flags
 	outputPath := flag.String("o", "", "Output path for downloaded file")
+	grpcPort := flag.String("p", "6800", "client port")
+	networkType := flag.String("n", "localhost", "type of network")
 	flag.Parse()
 
 	// Ensure there are enough arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Println("Usage: client [-o outputPath] <upload/download> <filename> ")
+		fmt.Println("Usage: client [-o outputPath] [-p grpcPort] <upload/download> <filename> ")
 		return
 	}
 
 	command := args[0]
 	filename := args[1]
 
+	address := "localhost"
+	if *networkType == "network" {
+	
+	address,_ = utils.GetWiFiIPv4()
+	}
 	// Connect to the Master Tracker
 	serverPort := config.LoadConfig("config.json").Server.Port
 	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", serverPort), grpc.WithInsecure())
+	
+	// Start the gRPC server
+	
+	responseAddress := address + ":" + *grpcPort
+	lis, err := net.Listen("tcp", responseAddress)
+	if err != nil {
+		log.Fatalf("Failed to listen: %v", err)
+	}
+	clienObject := &Client{done: make(chan struct{})}
+	grpcServer := grpc.NewServer()
+	pb.RegisterClientServer(grpcServer, clienObject)
+	go grpcServer.Serve(lis)
+
 	if err != nil {
 		log.Fatalf("Could not connect to Master Tracker: %v", err)
 	}
 	defer conn.Close()
 	client := pb.NewMasterTrackerClient(conn)
 
+
 	switch command {
 	case "upload":
-		uploadFile(client, filename)
+		uploadFile(client, filename, responseAddress)
 	case "download":
 		if *outputPath == "" {
 			*outputPath = "downloads" 
 		}
 		
 		downloadFile(client, filename, *outputPath)
+		close(clienObject.done)
+
 	default:
 		fmt.Println("Invalid command. Use 'upload' or 'download'.")
 	}
+		
+	<-clienObject.done
+    log.Printf("Client shutting down gracefully")
+}
+
+
+func (c *Client) NotifyUploadCompletion(ctx context.Context, req *pb.UploadSuccessResponse) (*emptypb.Empty, error) {
+	if(req.Success){
+		log.Printf("Upload completed successfully for file")
+		close(c.done)
+	}else{
+		log.Printf("Upload failed for file")
+		// Retry logic I think will be implemented here
+	}
+	return &emptypb.Empty{}, nil
 }
 
 // Upload logic
-func uploadFile(master pb.MasterTrackerClient, filename string) {
+func uploadFile(master pb.MasterTrackerClient, filename string, responseAddress string) {
 	fmt.Println("Uploading file:", filename)
 
 	// Ensure only MP4 files are allowed
@@ -82,7 +127,7 @@ func uploadFile(master pb.MasterTrackerClient, filename string) {
 	if err != nil {
 		log.Fatalf("Failed to connect to Data Keeper: %v", err)
 	}
-	SendFile(filename, conn)
+	SendFile(filename, conn, responseAddress)
 	conn.Close()
 }
 
@@ -112,9 +157,8 @@ func downloadFile(client pb.MasterTrackerClient, filename string,filePath string
 	ReceiveFile(dataKeeperAddress, filename,filePath)
 }
 
-
 // SendFile uploads a file to the server
-func SendFile(filename string, conn net.Conn) {
+func SendFile(filename string, conn net.Conn, responseAddress string) {
 	// Open the file
 	filePath := filepath.Join(utils.GetWorkingDir(), filename)
 	
@@ -127,7 +171,7 @@ func SendFile(filename string, conn net.Conn) {
 	defer file.Close()
 	
 	// Send request header
-	if err := utils.SendRequest(conn, "UPLOAD", filename); err != nil {
+	if err := utils.SendRequest(conn, "UPLOAD#" + responseAddress, filename); err != nil {
 		log.Fatalf("%v", err)
 		return
 	}

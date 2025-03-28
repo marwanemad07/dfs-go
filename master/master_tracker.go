@@ -160,12 +160,16 @@ func (s *MasterTracker) SetPortAvailability(dataKeeperName string, portNumber in
 
 func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUploadSuccess) (*emptypb.Empty, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath)
 	// s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
 	fmt.Printf("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
 	s.performReplication()
+
+	s.mu.Unlock()
+
+	notifyClient(true,req.ClientAddress);
+
 	return &emptypb.Empty{}, nil
 }
 func (s *MasterTracker) AddFile(dataKeeperName, filename, filePath string) {
@@ -387,14 +391,6 @@ func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []
 	}
 	return possible
 }
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 func main() {
 	port := config.LoadConfig("config.json").Server.Port
@@ -412,4 +408,29 @@ func main() {
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
+}
+
+func notifyClient(isUploaded bool, address string) {
+	// Notify client
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		log.Fatalf("Failed to connect to client: %v", err)
+	}
+
+	client := pb.NewClientClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	if _, err := client.NotifyUploadCompletion(ctx, &pb.UploadSuccessResponse{Success: isUploaded}); err != nil {
+		log.Printf("[ERROR] Failed to notify client: %v", err)
+	}
+	cancel()
+	conn.Close()
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

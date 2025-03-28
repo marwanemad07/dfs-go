@@ -348,3 +348,105 @@ var DataKeeper_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "dfs.proto",
 }
+
+const (
+	Client_NotifyUploadCompletion_FullMethodName = "/dfs.Client/NotifyUploadCompletion"
+)
+
+// ClientClient is the client API for Client service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type ClientClient interface {
+	NotifyUploadCompletion(ctx context.Context, in *UploadSuccessResponse, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type clientClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewClientClient(cc grpc.ClientConnInterface) ClientClient {
+	return &clientClient{cc}
+}
+
+func (c *clientClient) NotifyUploadCompletion(ctx context.Context, in *UploadSuccessResponse, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, Client_NotifyUploadCompletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ClientServer is the server API for Client service.
+// All implementations must embed UnimplementedClientServer
+// for forward compatibility.
+type ClientServer interface {
+	NotifyUploadCompletion(context.Context, *UploadSuccessResponse) (*emptypb.Empty, error)
+	mustEmbedUnimplementedClientServer()
+}
+
+// UnimplementedClientServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedClientServer struct{}
+
+func (UnimplementedClientServer) NotifyUploadCompletion(context.Context, *UploadSuccessResponse) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method NotifyUploadCompletion not implemented")
+}
+func (UnimplementedClientServer) mustEmbedUnimplementedClientServer() {}
+func (UnimplementedClientServer) testEmbeddedByValue()                {}
+
+// UnsafeClientServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ClientServer will
+// result in compilation errors.
+type UnsafeClientServer interface {
+	mustEmbedUnimplementedClientServer()
+}
+
+func RegisterClientServer(s grpc.ServiceRegistrar, srv ClientServer) {
+	// If the following call pancis, it indicates UnimplementedClientServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Client_ServiceDesc, srv)
+}
+
+func _Client_NotifyUploadCompletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadSuccessResponse)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClientServer).NotifyUploadCompletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Client_NotifyUploadCompletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClientServer).NotifyUploadCompletion(ctx, req.(*UploadSuccessResponse))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Client_ServiceDesc is the grpc.ServiceDesc for Client service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Client_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "dfs.Client",
+	HandlerType: (*ClientServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "NotifyUploadCompletion",
+			Handler:    _Client_NotifyUploadCompletion_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "dfs.proto",
+}
