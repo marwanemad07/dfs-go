@@ -84,6 +84,7 @@ func main() {
 
 	default:
 		fmt.Println("Invalid command. Use 'upload' or 'download'.")
+		return
 	}
 		
 	<-clienObject.done

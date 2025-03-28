@@ -274,7 +274,11 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 
 	// Define a small buffer (e.g., 100ms) to account for jitter.
 	buffer := 100 * time.Millisecond
-
+	for i := range s.fileTable.Nrow() {
+		if s.fileTable.Elem(i, 0).String() == req.DataKeeperName { // Column 0 = "dataKeeperName"
+			s.fileTable.Elem(i, 3).Set(true) // Column 3 = "isAlive"
+		}
+	}
 	// Reset the timer for this Data Keeper to fire after the heartbeat timeout plus the buffer.
 	s.nodeTimers[req.DataKeeperName] = time.AfterFunc(s.heartbeatTimeout+buffer, func() {
 		s.markDataKeeperDown(req.DataKeeperName)
@@ -282,6 +286,7 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	if _, exists := s.dataKeeperInfo[req.DataKeeperName]; !exists {
 		s.dataKeeperInfo[req.DataKeeperName] = DataKeeperInfo{Address: req.DataKeeperAddress, PortsTCP: req.PortsTCP, PortsGRPC: req.PortsGRPC}
 	}
+
 	log.Printf("[HEARTBEAT] Data Keeper: %s is alive (Updated at %v)", req.DataKeeperName, now)
 	return &pb.HeartbeatResponse{Success: true}, nil
 }

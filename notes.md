@@ -1,10 +1,7 @@
 ### Requirements
 
 1. Unique File names on the same datanode  (checksum)
-2. Client download
-3. run on diffrent machines 
-4. Client succes message (see arrow 6 in uploading file in the pdf) - This will make the client as a server
-
+2. set avilability 
 ### Enhancements
 
 - For the datakeeper that should upload the file, we can take the one with larger available storage _ 0.7 + number of available ports _ 0.3. Now we are taking random one
