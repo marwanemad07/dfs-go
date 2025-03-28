@@ -179,7 +179,7 @@ func (s *DataKeeperServer) ReplicateFile(ctx context.Context, req *pb.Replicatio
 	}
 	defer file.Close()
 
-	if _, err := io.Copy(conn, file); err != nil {
+	if _, err := io.Copy(writer, file); err != nil {
 		log.Printf("[REPLICATION ERROR] Failed to send file: %v", err)
 		return &pb.FileUploadSuccess{}, err
 	}
@@ -255,7 +255,10 @@ func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress s
 }
 
 // HandleFileUpload processes file uploads from the client
-func HandleFileUpload(filename string, conn net.Conn, isUpload bool) {
+func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUpload bool) {
+	if !isUpload{
+		filename = globals.nodeName + filename 
+	}
 	filePath := GetFilePath(filename)
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -263,10 +266,11 @@ func HandleFileUpload(filename string, conn net.Conn, isUpload bool) {
 		return
 	}
 	defer file.Close()
-	defer conn.Close()
-	if _, err = io.Copy(file, conn); err != nil {
+	if size, err := io.Copy(file, reader); err != nil {
 		log.Printf("Failed to save file %s: %v\n", file.Name(), err)
 		return
+	} else {
+		log.Print("File size:", size)
 	}
 	log.Printf("File %s received and saved successfully!\n", filename)
 	remoteAddr := conn.RemoteAddr().String()
@@ -316,9 +320,9 @@ func handleTcpRequest(conn net.Conn) {
 
 	// Check if it's an upload or download request
 	if requestType == "UPLOAD" {
-		HandleFileUpload(filename, conn, true)
+		HandleFileUpload(filename, reader, conn, true)
 	} else if requestType == "REPLICATE" {
-		HandleFileUpload(filename, conn, false)
+		HandleFileUpload(filename, reader, conn, false)
 	} else if requestType == "DOWNLOAD" {
 		HandleFileDownload(filename, conn)
 	} else {

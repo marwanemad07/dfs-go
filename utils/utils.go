@@ -125,16 +125,35 @@ func SendRequest(conn net.Conn, fields ...string) error {
 }
 
 
-func WriteFileToConnection(file *os.File, conn net.Conn) {
+func WriteFileToConnection(file *os.File, conn net.Conn) (int64, error) {
 	writer := bufio.NewWriter(conn)
-	if _, err := io.Copy(writer, file); err != nil {
-		log.Fatalf("Failed to send file data: %v", err)
+
+	// Get the file size for validation
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get file info: %w", err)
+	}
+	expectedSize := fileInfo.Size()
+
+	// Copy the file data to the connection
+	n, err := io.Copy(writer, file)
+	if err != nil {
+		return n, fmt.Errorf("failed to send file data: %w", err)
 	}
 
-	// Ensure all data is sent
+	// Ensure all buffered data is sent
 	if err := writer.Flush(); err != nil {
-		log.Fatalf("Failed to flush file data: %v", err)
+		return n, fmt.Errorf("failed to flush file data: %w", err)
 	}
+
+	// Validate that the full file was sent
+	if n != expectedSize {
+		log.Printf("Warning: Sent %d bytes, expected %d bytes", n, expectedSize)
+		return n, fmt.Errorf("incomplete data sent: sent %d bytes, expected %d", n, expectedSize)
+	}
+
+	log.Printf("Successfully sent %d bytes", n)
+	return n, nil
 }
 
 func IsPortAvailable(port int) bool {

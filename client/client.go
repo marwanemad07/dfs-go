@@ -133,9 +133,14 @@ func SendFile(filename string, conn net.Conn) {
 	}
 
 	// Send file data
-	utils.WriteFileToConnection(file, conn)
-	log.Println("Upload complete!")
+	n, err := utils.WriteFileToConnection(file, conn)
+	if err != nil {
+		log.Printf("Failed to upload file: %v", err)
+		return
+	}
+	log.Printf("Upload complete! Sent %d bytes", n)
 }
+
 // ReceiveFile downloads a file from the server
 func ReceiveFile(address, filename, filePath string) {
 	conn, err := net.Dial("tcp", address)
