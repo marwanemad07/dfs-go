@@ -272,7 +272,7 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	}
 
 	// Define a small buffer (e.g., 100ms) to account for jitter.
-	buffer := 100 * time.Millisecond
+	buffer := 8000 * time.Millisecond
 	for i := range s.fileTable.Nrow() {
 		if s.fileTable.Elem(i, 0).String() == req.DataKeeperName { // Column 0 = "dataKeeperName"
 			s.fileTable.Elem(i, 3).Set(true) // Column 3 = "isAlive"
@@ -373,16 +373,19 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		return err
 	}
 	dataKeeper := pb.NewDataKeeperClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // TODO: timout should be dyanmic
 	destinationAddress := s.dataKeeperInfo[destinationNodeName].Address + ":" + strconv.Itoa(tcpPortDest)
 	response, err := dataKeeper.ReplicateFile(ctx, &pb.ReplicationRequest{DestinationAddress: destinationAddress, Filename: filename,DestinationName: destinationNodeName});
+	
+	defer conn.Close()
+	defer cancel()
+
 	if err != nil {
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
+		return err
 	}
 	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath)
 	// s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
-	defer conn.Close()
-	defer cancel()
 	return err
 }
 func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {
@@ -422,7 +425,7 @@ func notifyClient(isUploaded bool, address string) {
 	}
 
 	client := pb.NewClientClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // TODO: timout should be dyanmic
 	if _, err := client.NotifyUploadCompletion(ctx, &pb.UploadSuccessResponse{Success: isUploaded}); err != nil {
 		log.Printf("[ERROR] Failed to notify client: %v", err)
 	}
