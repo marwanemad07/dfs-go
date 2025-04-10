@@ -32,7 +32,7 @@ func main() {
 	grpcPort := flag.String("p", "6800", "client port")
 	networkType := flag.String("n", "localhost", "type of network")
 	flag.Parse()
-
+	fmt.Println("Client started"," on port", *grpcPort)
 	// Ensure there are enough arguments
 	args := flag.Args()
 	if len(args) < 2 {
@@ -73,7 +73,7 @@ func main() {
 
 	switch command {
 	case "upload":
-		uploadFile(client, filename, responseAddress)
+		clienObject.uploadFile(client, filename, responseAddress)
 	case "download":
 		if *outputPath == "" {
 			*outputPath = "downloads" 
@@ -104,61 +104,112 @@ func (c *Client) NotifyUploadCompletion(ctx context.Context, req *pb.UploadSucce
 }
 
 // Upload logic
-func uploadFile(master pb.MasterTrackerClient, filename string, responseAddress string) {
-	fmt.Println("Uploading file:", filename)
+func (c *Client) uploadFile(master pb.MasterTrackerClient, filename string, responseAddress string) {
+    fmt.Println("Uploading file:", filename)
 
-	// Ensure only MP4 files are allowed
-	if !strings.HasSuffix(strings.ToLower(filename), ".mp4") {
-		log.Fatalf("Only MP4 files are allowed for upload")
-	}
+    // Ensure only MP4 files are allowed
+    if !strings.HasSuffix(strings.ToLower(filename), ".mp4") {
+        log.Fatalf("Only MP4 files are allowed for upload")
+    }
 
+    maxAttempts := 3
+	attemptUpload := func() (bool, error) {
+        // Request Data Keeper from Master Tracker
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+        defer cancel()
+        uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: filename})
+        if err != nil {
+            return false, fmt.Errorf("request upload failed: %v", err)
+        }
 
-	// Request Data Keeper from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	uploadResp, err := master.RequestUpload(ctx, &pb.UploadRequest{Filename: filename})
-	if err != nil {
-		log.Fatalf("Error requesting upload: %v", err)
-	}
+        log.Printf("Uploading to Data Keeper at %s", uploadResp.DataKeeperAddress)
 
-	log.Printf("Uploading to Data Keeper at %s", uploadResp.DataKeeperAddress)
+        conn, err := net.Dial("tcp", uploadResp.DataKeeperAddress)
+        if err != nil {
+            return false, fmt.Errorf("connect to Data Keeper failed: %v", err)
+        }
+        defer conn.Close() // Close connection when done
 
-	// Send file to Data Keeper via TCP
-	conn, err := net.Dial("tcp", uploadResp.DataKeeperAddress)
-	if err != nil {
-		log.Fatalf("Failed to connect to Data Keeper: %v", err)
-	}
-	SendFile(filename, conn, responseAddress)
-	conn.Close()
+        if !SendFile(filename, conn, responseAddress) {
+            return false, fmt.Errorf("send file failed")
+        }
+
+        log.Printf("File %s uploaded successfully to %s", filename, uploadResp.DataKeeperAddress)
+        return true, nil
+    }
+
+    for attempt := 0; attempt < maxAttempts; attempt++ {
+        success, err := attemptUpload()
+        if success {
+            return 
+        }
+
+        log.Printf("Attempt %d/%d: %v", attempt+1, maxAttempts, err)
+        if attempt == maxAttempts-1 {
+            log.Println("All attempts failed, giving up")
+            close(c.done) 
+            return
+        }
+
+        // Delay before next attempt (0s, 5s, 10s)
+        delay := time.Duration(attempt*5+5) * time.Second
+        log.Printf("Waiting %v before retrying...", delay)
+        time.Sleep(delay)
+    }
 }
-
 // Download logic
-func downloadFile(client pb.MasterTrackerClient, filename string,filePath string) {
-	fmt.Println("Downloading file:", filename)
+func downloadFile(client pb.MasterTrackerClient, filename string, filePath string) {
+    fmt.Println("Downloading file:", filename)
 
-	// Request file locations from Master Tracker
-	ctx, cancel := context.WithTimeout(context.Background(),10*time.Minute)
-	defer cancel()
-	downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
-	if err != nil {
-		log.Fatalf("Error requesting download: %v", err)
-	}
-	lenOFDataKeeperAddresses := len(downloadResp.DataKeeperAddresses)
-	if lenOFDataKeeperAddresses == 0 {
-		log.Fatalf("No Data Keeper has the requested file: %s", filename)
-	}
+    maxAttempts := 3
 
-	// Choose a random Data Keeper uniformaly to download from
-	index := utils.GetRandomIndex(lenOFDataKeeperAddresses)
-	dataKeeperAddress := downloadResp.DataKeeperAddresses[index]
-	log.Printf("Downloading from Data Keeper at %s", dataKeeperAddress)
+    attemptDownload := func() (bool, error) {
+        // Request file locations from Master Tracker
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+        defer cancel()
+        downloadResp, err := client.RequestDownload(ctx, &pb.DownloadRequest{Filename: filename})
+        if err != nil {
+            return false, fmt.Errorf("error requesting download: %v", err)
+        }
 
-	// Request and receive file via TCP
-	ReceiveFile(dataKeeperAddress, filename,filePath)
+        lenOfDataKeeperAddresses := len(downloadResp.DataKeeperAddresses)
+        if lenOfDataKeeperAddresses == 0 {
+            return false, fmt.Errorf("no Data Keeper has the requested file: %s", filename)
+        }
+
+        // Choose a random Data Keeper uniformly to download from
+        index := utils.GetRandomIndex(lenOfDataKeeperAddresses)
+        dataKeeperAddress := downloadResp.DataKeeperAddresses[index]
+        log.Printf("Downloading from Data Keeper at %s", dataKeeperAddress)
+
+        // Request and receive file via TCP
+        if ReceiveFile(dataKeeperAddress, filename, filePath) {
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to download file from Data Keeper: %s", dataKeeperAddress)
+    }
+
+    for attempt := 0; attempt < maxAttempts; attempt++ {
+        success, err := attemptDownload()
+        if success {
+            log.Printf("Successfully downloaded %s", filename)
+            return // Success, exit the function
+        }
+
+        log.Printf("Attempt  %d/%d: %v", attempt+1, maxAttempts, err)
+        if attempt == maxAttempts-1 {
+            log.Printf("All attempts failed to download %s, giving up", filename)
+            return
+        }
+		delay := time.Duration(attempt*5+5) * time.Second
+
+        log.Printf("Waiting %v before retrying...", delay)
+        time.Sleep(delay)
+    }
 }
 
 // SendFile uploads a file to the server
-func SendFile(filename string, conn net.Conn, responseAddress string) {
+func SendFile(filename string, conn net.Conn, responseAddress string) (bool) {
 	// Open the file
 	filePath := filepath.Join(utils.GetWorkingDir(), filename)
 	
@@ -166,58 +217,93 @@ func SendFile(filename string, conn net.Conn, responseAddress string) {
 	if err != nil {
 		log.Fatalf("Failed to open file: %v", err)
 		utils.SendResponse(conn, "ERROR: File not found")
-		return
+		return false
 	}
 	defer file.Close()
 	
 	// Send request header
 	if err := utils.SendRequest(conn, "UPLOAD#" + responseAddress, filename); err != nil {
 		log.Fatalf("%v", err)
-		return
+		return false
 	}
+	log.Printf("upload request recived successfully", )
 
 	// Send file data
 	n, err := utils.WriteFileToConnection(file, conn)
 	if err != nil {
 		log.Printf("Failed to upload file: %v", err)
-		return
+		return false
 	}
 	log.Printf("Upload complete! Sent %d bytes", n)
+	return true
 }
 
 // ReceiveFile downloads a file from the server
-func ReceiveFile(address string, filename string, filePath string) {
-	conn, err := net.Dial("tcp", address)
-	reader := bufio.NewReader(conn)
+func ReceiveFile(address string, filename string, filePath string)(bool) {
+    maxAttempts := 3
 
-	if err != nil {
-		log.Fatalf("Failed to connect to Data Keeper: %v", err)
-	}
-	defer conn.Close()
+    attemptDownload := func(attempt int) (bool, error) {
+        // Attempt to connect to the Data Keeper
+        conn, err := net.Dial("tcp", address)
+        if err != nil {
+            return false, fmt.Errorf("failed to connect to Data Keeper: %v", err)
+        }
+        defer conn.Close()
 
-	utils.EnsureStorageFolder(filePath)
+        reader := bufio.NewReader(conn)
+        utils.EnsureStorageFolder(filePath)
+        fullFilePath := filepath.Join(filePath, filename)
 
-	fullFilePath := filepath.Join(filePath, filename)
+        // Send download request
+        if err := utils.SendRequest(conn, "DOWNLOAD", filename); err != nil {
+            return false, fmt.Errorf("failed to send download request: %v", err)
+        }
 
-	if err := utils.SendRequest(conn, "DOWNLOAD", filename); err != nil {
-		log.Fatalf("Failed to send download request: %v", err)
-	}
+        // Create the file
+        file, err := os.Create(fullFilePath)
+        if err != nil {
+            return false, fmt.Errorf("failed to create file: %v", err)
+        }
+        defer file.Close()
 
-	file, err := os.Create(fullFilePath)
-	if err != nil {
-		log.Fatalf("Failed to create file: %v", err)
-	}
+        // Get file size
+        totalSizeStr, err := getResponse(reader)
+        if err != nil {
+            return false, fmt.Errorf("failed to read file size: %v", err)
+        }
+        totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64)
+        if err != nil {
+            return false, fmt.Errorf("failed to parse file size: %v", err)
+        }
+        log.Printf("File size: %d bytes", totalSize)
 
-	totalSizeStr, err := getResponse(reader)
-	totalSize,_ := strconv.ParseInt(totalSizeStr, 10, 64)
-	log.Printf("File size: %d bytes\n", totalSize)
-	if err != nil {
-		log.Fatalf("Failed to read file size: %v", err)
-	}
+        // Receive and save the file
+        if err := receiveAndSaveFile(reader, file, totalSize); err != nil {
+            return false, fmt.Errorf("failed to receive file: %v", err)
+        }
 
-	receiveAndSaveFile(reader, file, totalSize)
+        log.Printf("Successfully downloaded %s to %s", filename, fullFilePath)
+        return true, nil
+    }
+
+    for attempt := 0; attempt < maxAttempts; attempt++ {
+        success, err := attemptDownload(attempt)
+        if success {
+            return true // Success, exit the function
+        }
+
+        log.Printf("Attempt %d/%d: %v", attempt+1, maxAttempts, err)
+        if attempt == maxAttempts-1 {
+            log.Printf("All attempts failed to download %s, Trying differnt data node", filename)
+            return false
+        }
+		delay := time.Duration(attempt*5+5) * time.Second
+
+        log.Printf("Waiting %v before retrying...", delay)
+        time.Sleep(delay)
+    }
+	return true
 }
-
 // getFileSize reads the expected file size from the server.
 func getResponse(reader *bufio.Reader) (string, error) {
 	str, err := reader.ReadString('\n')

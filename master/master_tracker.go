@@ -113,61 +113,49 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 
 	log.Printf("[UPLOAD] File assigned to Data Keeper: %s", selectedDataKeeperName)
 	selectedDataKeeperPort, _ := s.GetRandomAvailablePort(selectedDataKeeperName, TCP)
-	// s.SetPortAvailability(selectedDataKeeperName, selectedDataKeeperPort, TCP, false)
+	s.SetPortAvailability(selectedDataKeeperName, selectedDataKeeperPort, TCP, false)
 	selectedDataKeeperAdress := s.dataKeeperInfo[selectedDataKeeperName].Address + ":" + strconv.Itoa(selectedDataKeeperPort)
+	fmt.Printf("[Request Upload] ports: %v\n", s.dataKeeperInfo)
 	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeperAdress}, nil
 }
 
 func (s *MasterTracker) SetPortAvailability(dataKeeperName string, portNumber int, portType int, isAvailable bool) error {
-	// Retrieve the DataKeeperInfo from the map
-	dataKeeper, exists := s.dataKeeperInfo[dataKeeperName]
-	if !exists {
-		return fmt.Errorf("dataKeeper %s not found", dataKeeperName)
-	}
+    dataKeeper, exists := s.dataKeeperInfo[dataKeeperName]
+    if !exists {
+        return fmt.Errorf("dataKeeper %s not found", dataKeeperName)
+    }
 
-	// Select the appropriate port list based on the port type
-	var ports *[]*pb.PortStatus
-	switch portType {
-	case TCP:
-		ports = &dataKeeper.PortsTCP
-	case GRPC:
-		ports = &dataKeeper.PortsGRPC
-	default:
-		return errors.New("invalid port type")
-	}
-	index := -1
-	// Find and update the port status
-	for i := range *ports {
-		if (*ports)[i].PortNumber == int32(portNumber) {
-			index = i
-		}
-	}
+    var ports []*pb.PortStatus
+    switch portType {
+    case TCP:
+        ports = dataKeeper.PortsTCP
+    case GRPC:
+        ports = dataKeeper.PortsGRPC
+    default:
+        return errors.New("invalid port type")
+    }
 
-	if index == -1 {
-		return fmt.Errorf("port %d not found in dataKeeper %s", portNumber, dataKeeperName)
-	}
-	switch portType {
-	case TCP:
-		s.dataKeeperInfo[dataKeeperName].PortsTCP[index].IsAvailable = isAvailable
-	case GRPC:
-		s.dataKeeperInfo[dataKeeperName].PortsGRPC[index].IsAvailable = isAvailable
-	default:
-		return errors.New("invalid port type")
-	}
-	return nil
+    for i, port := range ports {
+        if port.PortNumber == int32(portNumber) {
+            ports[i].IsAvailable = isAvailable
+            s.dataKeeperInfo[dataKeeperName] = dataKeeper // Update the map with the modified struct
+            log.Printf("[SetPortAvailability] Set port %d on %s (type %d) to isAvailable=%v", portNumber, dataKeeperName, portType, isAvailable)
+            return nil
+        }
+    }
+    return fmt.Errorf("port %d not found in dataKeeper %s", portNumber, dataKeeperName)
 }
-
 func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUploadSuccess) (*emptypb.Empty, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath)
-	// s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
+	s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
 	fmt.Printf("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
-	s.performReplication()
-
-	s.mu.Unlock()
-
+	
+	
 	notifyClient(true,req.ClientAddress);
+	s.performReplication()
 
 	return &emptypb.Empty{}, nil
 }
@@ -349,7 +337,7 @@ func (s *MasterTracker) performReplication() {
 
 			for _, destination := range selectedDests {
 				log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
-
+				
 				if err := s.notifyMachineDataTransfer(source, destination, filename); err == nil {
 					log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
 				} else {
@@ -361,7 +349,10 @@ func (s *MasterTracker) performReplication() {
 }
 func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNodeName, filename string) error {
 	grpcPortSrc, _ := s.GetRandomAvailablePort(sourceNodeName, GRPC)
+	s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, false)
+
 	tcpPortDest, err := s.GetRandomAvailablePort(destinationNodeName, TCP)
+	s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, false)
 
 	if err != nil {
 		log.Printf("Invalid source port: %s", sourceNodeName)
@@ -385,7 +376,9 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		return err
 	}
 	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath)
-	// s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
+	s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
+	s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
+	log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, sourceNodeName, destinationNodeName)
 	return err
 }
 func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {

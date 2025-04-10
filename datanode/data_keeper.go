@@ -283,12 +283,13 @@ func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUp
 		}
 
 		relativePath := path.Join("storage", filepath.Base(file.Name()))
-		SendUploadSuccessResponse(filename, relativePath, remoteAddr)
+		localAddr := conn.LocalAddr().(*net.TCPAddr) // Type assertion to TCPAddr
+        port := localAddr.Port
+		SendUploadSuccessResponse(filename, relativePath,int32(port), remoteAddr)
 	}
 }
 
-func SendUploadSuccessResponse(filename, filePath string, address string) {
-	portNumber, _ := utils.ExtractPort(address)
+func SendUploadSuccessResponse(filename, filePath string,portNumber int32 ,address string) {
 	fmt.Println("address:", address)	
 	conn, err := grpc.Dial(globals.masterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	client := pb.NewMasterTrackerClient(conn)
@@ -296,7 +297,7 @@ func SendUploadSuccessResponse(filename, filePath string, address string) {
 		DataKeeperName: globals.nodeName,
 		Filename:       filename,
 		FilePath:       filePath,
-		PortNumber:     int32(portNumber),
+		PortNumber:     portNumber,
 		ClientAddress:        address,
 	})
 	if err != nil {
