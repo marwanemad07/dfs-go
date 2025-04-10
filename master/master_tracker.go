@@ -155,7 +155,7 @@ func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUp
 	
 	
 	notifyClient(true,req.ClientAddress);
-	s.performReplication()
+	go s.performReplication()
 
 	return &emptypb.Empty{}, nil
 }
@@ -282,35 +282,36 @@ func (s *MasterTracker) ReplicationCheck() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		s.mu.Lock()
 		s.performReplication()
-		s.mu.Unlock()
-
 	}
 }
 
 func (s *MasterTracker) performReplication() {
+	s.mu.Lock()
 	// Extract all unique filenames from the fileTable
-	filenameSeries := s.fileTable.Col("filename")
+	table :=s.fileTable.Copy()
+	s.mu.Unlock()
+
+	filenameSeries := table.Col("filename")
 	filenameMap := make(map[string]struct{})
 	// Use a map to ensure uniqueness
 	for _, filename := range filenameSeries.Records() {
 		filenameMap[filename] = struct{}{}
 	}
 
-	// Convert the map keys to a slice
 	var filenames []string
 	for filename := range filenameMap {
 		filenames = append(filenames, filename)
 	}
 	log.Printf("[REPLICATION] Replicating files names: %v", filenames)
 	for _, filename := range filenames {
-		filtered := s.fileTable.FilterAggregation(
+		filtered := table.FilterAggregation(
 			dataframe.And,
 			dataframe.F{Colname: "filename", Comparator: series.Eq, Comparando: filename},
 			dataframe.F{Colname: "isAlive", Comparator: series.Eq, Comparando: true},
 		)
 		currentCount := filtered.Nrow()
+
 		if currentCount < 3 {
 			sources := filtered.Col("dataKeeperName").Records()
 			if (len(sources) == 0) {
@@ -337,7 +338,6 @@ func (s *MasterTracker) performReplication() {
 
 			for _, destination := range selectedDests {
 				log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
-				
 				if err := s.notifyMachineDataTransfer(source, destination, filename); err == nil {
 					log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
 				} else {
@@ -345,14 +345,19 @@ func (s *MasterTracker) performReplication() {
 				}
 			}
 		}
+		
 	}
 }
 func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNodeName, filename string) error {
+	s.mu.Lock()
 	grpcPortSrc, _ := s.GetRandomAvailablePort(sourceNodeName, GRPC)
 	s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, false)
 
 	tcpPortDest, err := s.GetRandomAvailablePort(destinationNodeName, TCP)
 	s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, false)
+	log.Printf("remove lock")
+
+	s.mu.Unlock()
 
 	if err != nil {
 		log.Printf("Invalid source port: %s", sourceNodeName)
@@ -375,10 +380,14 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
 		return err
 	}
+	log.Printf("acquired lock")
+	s.mu.Lock()
 	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath)
 	s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
 	s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
-	log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, sourceNodeName, destinationNodeName)
+	
+	log.Printf("remove lock")
+	s.mu.Unlock()
 	return err
 }
 func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {
