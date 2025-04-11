@@ -338,7 +338,9 @@ func (s *MasterTracker) performReplication() {
 }
 func (s *MasterTracker) performReplicationForFile(sources []string, filename string ) {
 	currentCount := len(sources)
-
+	if currentCount == 0 {
+		return 
+	}
 	sourceNode := sources[0]
 	possibleDests := s.getPossibleDestinations(sources)
 
@@ -389,11 +391,20 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 
 	if err != nil {
 		log.Printf("Invalid source port: %s", sourceNodeName)
+		s.mu.Lock()
+		s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, true)
+		s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
+		s.mu.Unlock()
+
 		return err
 	}
 	conn, err := grpc.Dial(s.dataKeeperInfo[sourceNodeName].Address+":"+strconv.Itoa(grpcPortSrc), grpc.WithInsecure())
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect to Data Keeper: %v", err)
+		s.mu.Lock()
+		s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, true)
+		s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
+		s.mu.Unlock()
 		return err
 	}
 	dataKeeper := pb.NewDataKeeperClient(conn)
@@ -406,6 +417,10 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 
 	if err != nil {
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
+		s.mu.Lock()
+		s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, true)
+		s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
+		s.mu.Unlock()
 		return err
 	}
 	s.mu.Lock()
