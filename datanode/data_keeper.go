@@ -310,7 +310,7 @@ func SendUploadSuccessResponse(filename, filePath string,portNumber int32 ,addre
 
 func handleTcpRequest(conn net.Conn) {
 	reader := bufio.NewReader(conn)
-
+	
 	// Read request type (Upload or Download)
 	requestType, err := reader.ReadString('\n')
 	if err != nil {
@@ -342,6 +342,13 @@ func handleTcpRequest(conn net.Conn) {
 
 // HandleFileDownload processes file download requests
 func HandleFileDownload(filename string, conn net.Conn) {
+	localAddr := conn.LocalAddr().(*net.TCPAddr)
+    port := int32(localAddr.Port)
+	if err := registerPortStatus(port, false); err != nil {
+        log.Printf("[ERROR] Failed to set port %d to unavailable: %v", port, err)
+        utils.SendResponse(conn, "ERROR: Server issue")
+        return
+    }
 	filePath := GetFilePath(filename)
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -355,13 +362,14 @@ func HandleFileDownload(filename string, conn net.Conn) {
 	fileInfo, _ := file.Stat()
 	fmt.Println("File size:", fileInfo.Size())
 
-	// hasher := sha256.New()
-	// io.Copy(hasher, file)
-	// checksum := fmt.Sprintf("%x", hasher.Sum(nil))
+
 	file.Seek(0, io.SeekStart)
 
 	utils.SendResponse(conn, strconv.FormatInt(fileInfo.Size(), 10))
 	utils.WriteFileToConnection(file, conn)
+	if err := registerPortStatus(port, true); err != nil {
+        log.Printf("[ERROR] Failed to set port %d back to available: %v", port, err)
+    }
 }
 
 // readFilename reads and trims the filename from the connection
@@ -377,4 +385,32 @@ func GetFilePath(filename string) string {
 	utils.EnsureStorageFolder("storage")
 	filePath := path.Join(utils.GetWorkingDir(), "storage", filename)
 	return filePath
+}
+
+
+func registerPortStatus(portNumber int32, isAvailable bool) error {
+    conn, err := grpc.Dial(globals.masterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+    if err != nil {
+        return fmt.Errorf("failed to connect to master: %w", err)
+    }
+    defer conn.Close()
+
+    client := pb.NewMasterTrackerClient(conn)
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+
+    req := &pb.PortRegistrationRequest{
+        DataKeeperName:    globals.nodeName,
+        PortNumber:        portNumber,
+        IsAvailable:       isAvailable,
+    }
+    resp, err := client.RegisterPortStatus(ctx, req)
+    if err != nil {
+        return fmt.Errorf("failed to register port %d (available: %v): %w", portNumber, isAvailable, err)
+    }
+    if !resp.Success {
+        return fmt.Errorf("RegisterPortStatus returned success=false for port %d", portNumber)
+    }
+    log.Printf("[RegisterPortStatus] Set port %d to available=%v for DataKeeper %s", portNumber, isAvailable, globals.nodeName)
+    return nil
 }

@@ -15,6 +15,8 @@ service MasterTracker {
   rpc RequestDownload(DownloadRequest) returns (DownloadResponse);
   // Data Keeper sends a heartbeat to indicate it is alive.
   rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Data Keeper registers its port status with the Master Tracker.
+  rpc RegisterPortStatus(PortRegistrationRequest) returns (PortRegistrationResponse);
 }
 
 service DataKeeper {
@@ -77,4 +79,14 @@ message HeartbeatResponse {
 message PortStatus {
   int32 portNumber = 1;
   bool isAvailable = 2;
+}
+
+message PortRegistrationRequest {
+  string dataKeeperName = 1; // Name of the DataKeeper
+  int32 portNumber = 2; // Port number being reported
+  bool isAvailable = 3; // Availability status of the port
+}
+
+message PortRegistrationResponse {
+  bool success = 1; // Indicates if the MasterTracker successfully recorded the status
 }

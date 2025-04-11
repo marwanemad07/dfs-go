@@ -114,10 +114,14 @@ func (s *MasterTracker) RequestUpload(ctx context.Context, req *pb.UploadRequest
 	}
 
 	log.Printf("[UPLOAD] File assigned to Data Keeper: %s", selectedDataKeeperName)
-	selectedDataKeeperPort, _ := s.GetRandomAvailablePort(selectedDataKeeperName, TCP)
+	selectedDataKeeperPort, err := s.GetRandomAvailablePort(selectedDataKeeperName, TCP)
+	if err != nil {
+		log.Printf("[ERROR] No available ports for Data Keeper %s: %v", selectedDataKeeperName, err)
+		return nil, fmt.Errorf("no available ports for Data Keeper %s", selectedDataKeeperName)
+	}
 	s.SetPortAvailability(selectedDataKeeperName, selectedDataKeeperPort, TCP, false)
 	selectedDataKeeperAdress := s.dataKeeperInfo[selectedDataKeeperName].Address + ":" + strconv.Itoa(selectedDataKeeperPort)
-	fmt.Printf("[Request Upload] ports: %v\n", s.dataKeeperInfo)
+	fmt.Printf("[Request Upload] ports: %v\n", s.dataKeeperInfo[selectedDataKeeperName])
 	return &pb.UploadResponse{DataKeeperAddress: selectedDataKeeperAdress}, nil
 }
 
@@ -263,7 +267,7 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	}
 
 	// Define a small buffer (e.g., 100ms) to account for jitter.
-	buffer := 8000 * time.Millisecond
+	buffer := 100 * time.Millisecond
 	for i := range s.fileTable.Nrow() {
 		if s.fileTable.Elem(i, 0).String() == req.DataKeeperName { // Column 0 = "dataKeeperName"
 			s.fileTable.Elem(i, 3).Set(true) // Column 3 = "isAlive"
@@ -481,4 +485,27 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func (s *MasterTracker) RegisterPortStatus(ctx context.Context, req *pb.PortRegistrationRequest) (*pb.PortRegistrationResponse, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    log.Printf("[RegisterPortStatus] Received request from DataKeeper: %s, Port: %d, Available: %v",
+        req.DataKeeperName, req.PortNumber, req.IsAvailable)
+
+    dataKeeper := s.dataKeeperInfo[req.DataKeeperName]
+	for _, port := range dataKeeper.PortsTCP {
+		if port.PortNumber == req.PortNumber {
+
+			port.IsAvailable = req.IsAvailable
+			log.Printf("[RegisterPortStatus] Updated port %d availability to %v for DataKeeper: %s",
+				req.PortNumber, req.IsAvailable, req.DataKeeperName)
+			break
+		}
+	}
+
+	s.dataKeeperInfo[req.DataKeeperName] = dataKeeper
+
+    return &pb.PortRegistrationResponse{Success: true}, nil
 }

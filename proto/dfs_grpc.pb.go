@@ -24,6 +24,7 @@ const (
 	MasterTracker_RequestUploadSuccess_FullMethodName = "/dfs.MasterTracker/RequestUploadSuccess"
 	MasterTracker_RequestDownload_FullMethodName      = "/dfs.MasterTracker/RequestDownload"
 	MasterTracker_SendHeartbeat_FullMethodName        = "/dfs.MasterTracker/SendHeartbeat"
+	MasterTracker_RegisterPortStatus_FullMethodName   = "/dfs.MasterTracker/RegisterPortStatus"
 )
 
 // MasterTrackerClient is the client API for MasterTracker service.
@@ -40,6 +41,8 @@ type MasterTrackerClient interface {
 	RequestDownload(ctx context.Context, in *DownloadRequest, opts ...grpc.CallOption) (*DownloadResponse, error)
 	// Data Keeper sends a heartbeat to indicate it is alive.
 	SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	// Data Keeper registers its port status with the Master Tracker.
+	RegisterPortStatus(ctx context.Context, in *PortRegistrationRequest, opts ...grpc.CallOption) (*PortRegistrationResponse, error)
 }
 
 type masterTrackerClient struct {
@@ -90,6 +93,16 @@ func (c *masterTrackerClient) SendHeartbeat(ctx context.Context, in *HeartbeatRe
 	return out, nil
 }
 
+func (c *masterTrackerClient) RegisterPortStatus(ctx context.Context, in *PortRegistrationRequest, opts ...grpc.CallOption) (*PortRegistrationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PortRegistrationResponse)
+	err := c.cc.Invoke(ctx, MasterTracker_RegisterPortStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterTrackerServer is the server API for MasterTracker service.
 // All implementations must embed UnimplementedMasterTrackerServer
 // for forward compatibility.
@@ -104,6 +117,8 @@ type MasterTrackerServer interface {
 	RequestDownload(context.Context, *DownloadRequest) (*DownloadResponse, error)
 	// Data Keeper sends a heartbeat to indicate it is alive.
 	SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	// Data Keeper registers its port status with the Master Tracker.
+	RegisterPortStatus(context.Context, *PortRegistrationRequest) (*PortRegistrationResponse, error)
 	mustEmbedUnimplementedMasterTrackerServer()
 }
 
@@ -125,6 +140,9 @@ func (UnimplementedMasterTrackerServer) RequestDownload(context.Context, *Downlo
 }
 func (UnimplementedMasterTrackerServer) SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
+}
+func (UnimplementedMasterTrackerServer) RegisterPortStatus(context.Context, *PortRegistrationRequest) (*PortRegistrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterPortStatus not implemented")
 }
 func (UnimplementedMasterTrackerServer) mustEmbedUnimplementedMasterTrackerServer() {}
 func (UnimplementedMasterTrackerServer) testEmbeddedByValue()                       {}
@@ -219,6 +237,24 @@ func _MasterTracker_SendHeartbeat_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterTracker_RegisterPortStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortRegistrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterTrackerServer).RegisterPortStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterTracker_RegisterPortStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterTrackerServer).RegisterPortStatus(ctx, req.(*PortRegistrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterTracker_ServiceDesc is the grpc.ServiceDesc for MasterTracker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -241,6 +277,10 @@ var MasterTracker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendHeartbeat",
 			Handler:    _MasterTracker_SendHeartbeat_Handler,
+		},
+		{
+			MethodName: "RegisterPortStatus",
+			Handler:    _MasterTracker_RegisterPortStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
