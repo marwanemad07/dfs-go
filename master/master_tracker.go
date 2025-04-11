@@ -55,6 +55,8 @@ func NewMasterTracker() *MasterTracker {
 		series.New([]string{}, series.String, "filename"),
 		series.New([]string{}, series.String, "filePath"),
 		series.New([]bool{}, series.Bool, "isAlive"),
+		series.New([]bool{}, series.Bool, "isReplicating"),
+
 	)
 
 	return &MasterTracker{
@@ -147,24 +149,25 @@ func (s *MasterTracker) SetPortAvailability(dataKeeperName string, portNumber in
 }
 func (s *MasterTracker) RequestUploadSuccess(ctx context.Context, req *pb.FileUploadSuccess) (*emptypb.Empty, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath)
+	
+	s.AddFile(req.DataKeeperName, req.Filename, req.FilePath,true)
 	s.SetPortAvailability(req.DataKeeperName, int(req.PortNumber), TCP, true)
 	fmt.Printf("[UPLOAD SUCCESS] Selected port: %v\n", s.dataKeeperInfo)
+	s.mu.Unlock()
 	
 	
 	notifyClient(true,req.ClientAddress);
-	go s.performReplication()
+	go s.performReplicationForFile([]string{req.DataKeeperName}, req.Filename)
 
 	return &emptypb.Empty{}, nil
 }
-func (s *MasterTracker) AddFile(dataKeeperName, filename, filePath string) {
+func (s *MasterTracker) AddFile(dataKeeperName, filename, filePath string,isReplicating bool) {
 	newRow := dataframe.New(
 		series.New([]string{dataKeeperName}, series.String, "dataKeeperName"),
 		series.New([]string{filename}, series.String, "filename"),
 		series.New([]string{filePath}, series.String, "filePath"),
 		series.New([]bool{true}, series.Bool, "isAlive"),
+		series.New([]bool{isReplicating}, series.Bool, "isReplicating"),
 	)
 
 	s.fileTable = s.fileTable.RBind(newRow)
@@ -288,8 +291,8 @@ func (s *MasterTracker) ReplicationCheck() {
 
 func (s *MasterTracker) performReplication() {
 	s.mu.Lock()
-	// Extract all unique filenames from the fileTable
 	table :=s.fileTable.Copy()
+	
 	s.mu.Unlock()
 
 	filenameSeries := table.Col("filename")
@@ -312,41 +315,66 @@ func (s *MasterTracker) performReplication() {
 		)
 		currentCount := filtered.Nrow()
 
-		if currentCount < 3 {
-			sources := filtered.Col("dataKeeperName").Records()
-			if (len(sources) == 0) {
+		isReplicating := false
+		for i := 0; i < filtered.Nrow(); i++ {
+			val, err := filtered.Elem(i, 4).Bool()
+			if err != nil {
+				log.Printf("[ERROR] Failed to get 'isReplicating' value for row %d: %v", i, err)
 				continue
 			}
-			source := sources[0]
-			remainingDataKeepers := 3 - currentCount
-			possibleDests := s.getPossibleDestinations(filtered)
-
-			if len(possibleDests) == 0 {
-				continue
+			if val {
+				isReplicating = true
+				break
 			}
-			
-			if len(possibleDests) < remainingDataKeepers {
-				remainingDataKeepers = len(possibleDests) // Prevent out-of-bounds errors
-			}
+		}
 
-			rand.Seed(time.Now().UnixNano())
-			rand.Shuffle(len(possibleDests), func(i, j int) {
-				possibleDests[i], possibleDests[j] = possibleDests[j], possibleDests[i]
-			})
-
-			selectedDests := possibleDests[:remainingDataKeepers]
-
-			for _, destination := range selectedDests {
-				log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
-				if err := s.notifyMachineDataTransfer(source, destination, filename); err == nil {
-					log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, source, destination)
-				} else {
-					log.Printf("[ERROR] Replication failed for file: %s from Data Keeper: %s to Data Keeper: %s, error: %v", filename, source, destination, err)
-				}
-			}
+		if currentCount < 3 && !isReplicating  { // Column 4 = "isReplicating"
+			s.performReplicationForFile(filtered.Col("dataKeeperName").Records(), filename)
+		} else {
+			log.Printf("[REPLICATION] File %s already has 3 replicas, skipping replication.", filename)
 		}
 		
 	}
+}
+func (s *MasterTracker) performReplicationForFile(sources []string, filename string ) {
+	currentCount := len(sources)
+
+	sourceNode := sources[0]
+	possibleDests := s.getPossibleDestinations(sources)
+
+	remainingDataKeepers := 3 - currentCount
+
+	if len(possibleDests) == 0 {
+		return
+	}
+
+	if len(possibleDests) < remainingDataKeepers {
+		remainingDataKeepers = len(possibleDests) // Prevent out-of-bounds 
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(possibleDests), func(i, j int) {
+		possibleDests[i], possibleDests[j] = possibleDests[j], possibleDests[i]
+	})
+
+	selectedDests := possibleDests[:remainingDataKeepers]
+
+	for _, destination := range selectedDests {
+		log.Printf("[REPLICATION] Replicating file: %s from Data Keeper: %s to Data Keeper: %s", filename, sourceNode, destination)
+		if err := s.notifyMachineDataTransfer(sourceNode, destination, filename); err == nil {
+			log.Printf("[SUCCESS] Replication succeeded for file: %s from Data Keeper: %s to Data Keeper: %s", filename, sourceNode, destination)
+		} else {
+			log.Printf("[ERROR] Replication failed for file: %s from Data Keeper: %s to Data Keeper: %s, error: %v", filename, sourceNode, destination, err)
+		}
+	}
+	log.Printf("[REPLICATION] Replication completed for file: %s from Data Keeper: %s to Data Keepers: %v", filename, sourceNode, selectedDests)
+	s.mu.Lock()
+	for i := 0; i < s.fileTable.Nrow(); i++ {
+		if s.fileTable.Elem(i, 1).String() == filename { // Column 1 = "filename"
+			s.fileTable.Elem(i, 4).Set(false) // Column 4 = "isReplicating"
+		}
+	}
+	s.mu.Unlock()
 }
 func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNodeName, filename string) error {
 	s.mu.Lock()
@@ -380,18 +408,14 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		log.Printf("[ERROR] Failed to replicate file: %v", err)
 		return err
 	}
-	log.Printf("acquired lock")
 	s.mu.Lock()
-	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath)
+	s.AddFile(response.DataKeeperName, response.Filename, response.FilePath,false)
 	s.SetPortAvailability(response.DataKeeperName, int(response.PortNumber), TCP, true)
 	s.SetPortAvailability(sourceNodeName, int(grpcPortSrc), GRPC, true)
-	
-	log.Printf("remove lock")
 	s.mu.Unlock()
 	return err
 }
-func (s *MasterTracker) getPossibleDestinations(filtered dataframe.DataFrame) []string {
-	currentDKs := filtered.Col("dataKeeperName").Records()
+func (s *MasterTracker) getPossibleDestinations(currentDKs []string) []string {
 	possible := make([]string, 0)
 	for dk := range s.dataKeeperInfo {
 		if !contains(currentDKs, dk) {
