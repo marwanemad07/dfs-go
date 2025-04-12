@@ -35,13 +35,14 @@ func main() {
 	fmt.Println("Client started"," on port", *grpcPort)
 	// Ensure there are enough arguments
 	args := flag.Args()
-	if len(args) < 2 {
-		fmt.Println("Usage: client [-o outputPath] [-p grpcPort] <upload/download> <filename> ")
+	if len(args) < 3 {
+		fmt.Println("Usage: client [-o outputPath] [-p grpcPort] <upload/download> <filename> <masterAddress>")
 		return
 	}
 
 	command := args[0]
 	filename := args[1]
+	masterAddress := args[2]
 
 	address := "localhost"
 	if *networkType == "network" {
@@ -50,8 +51,8 @@ func main() {
 	}
 	// Connect to the Master Tracker
 	serverPort := config.LoadConfig("config.json").Server.Port
-	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", serverPort), grpc.WithInsecure())
-	
+	conn, err := grpc.Dial(masterAddress + ":" + strconv.Itoa(serverPort), grpc.WithInsecure())
+	log.Println(masterAddress + ":" + strconv.Itoa(serverPort))
 	// Start the gRPC server
 	
 	responseAddress := address + ":" + *grpcPort

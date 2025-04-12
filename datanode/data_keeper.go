@@ -6,7 +6,7 @@ import (
 	"dfs/config"
 	pb "dfs/proto"
 	"dfs/utils"
-	"flag"
+	// "flag"
 	"fmt"
 	"io"
 	"log"
@@ -42,7 +42,7 @@ type Globals struct {
 var globals = &Globals{}
 
 func main() {
-	masterAddress := *flag.String("m", "localhost", "master address")
+	masterAddress := "172.20.10.5" //*flag.String("m", "localhost", "master address")
 
 	if len(os.Args) < 5 {
 		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports> <node_name> ...")
