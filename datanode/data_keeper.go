@@ -254,9 +254,6 @@ func sendHeartbeat(client pb.MasterTrackerClient, name string, dataNodeAddress s
 
 // HandleFileUpload processes file uploads from the client
 func HandleFileUpload(filename string, reader *bufio.Reader, conn net.Conn, isUpload bool, clientAddress ...string) {
-	if !isUpload {
-		filename = globals.nodeName + filename
-	}
 	filePath := GetFilePath(filename)
 	file, err := os.Create(filePath)
 	if err != nil {

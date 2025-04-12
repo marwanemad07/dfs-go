@@ -267,7 +267,7 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	}
 
 	// Define a small buffer (e.g., 100ms) to account for jitter.
-	buffer := 500 * time.Millisecond
+	buffer := 5000 * time.Millisecond
 	for i := range s.fileTable.Nrow() {
 		if s.fileTable.Elem(i, 0).String() == req.DataKeeperName { // Column 0 = "dataKeeperName"
 			s.fileTable.Elem(i, 3).Set(true) // Column 3 = "isAlive"
@@ -343,6 +343,13 @@ func (s *MasterTracker) performReplication() {
 func (s *MasterTracker) performReplicationForFile(sources []string, filename string ) {
 	currentCount := len(sources)
 	if currentCount == 0 {
+		s.mu.Lock()
+		for i := 0; i < s.fileTable.Nrow(); i++ {
+			if s.fileTable.Elem(i, 1).String() == filename { // Column 1 = "filename"
+				s.fileTable.Elem(i, 4).Set(false) // Column 4 = "isReplicating"
+			}
+		}
+		s.mu.Unlock()
 		return 
 	}
 	sourceNode := sources[0]
@@ -351,6 +358,13 @@ func (s *MasterTracker) performReplicationForFile(sources []string, filename str
 	remainingDataKeepers := 3 - currentCount
 
 	if len(possibleDests) == 0 {
+		s.mu.Lock()
+		for i := 0; i < s.fileTable.Nrow(); i++ {
+			if s.fileTable.Elem(i, 1).String() == filename { // Column 1 = "filename"
+				s.fileTable.Elem(i, 4).Set(false) // Column 4 = "isReplicating"
+			}
+		}
+		s.mu.Unlock()
 		return
 	}
 
