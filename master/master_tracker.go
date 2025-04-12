@@ -267,7 +267,7 @@ func (s *MasterTracker) SendHeartbeat(ctx context.Context, req *pb.HeartbeatRequ
 	}
 
 	// Define a small buffer (e.g., 100ms) to account for jitter.
-	buffer := 100 * time.Millisecond
+	buffer := 500 * time.Millisecond
 	for i := range s.fileTable.Nrow() {
 		if s.fileTable.Elem(i, 0).String() == req.DataKeeperName { // Column 0 = "dataKeeperName"
 			s.fileTable.Elem(i, 3).Set(true) // Column 3 = "isAlive"
