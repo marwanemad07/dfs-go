@@ -403,7 +403,6 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 
 	tcpPortDest, err := s.GetRandomAvailablePort(destinationNodeName, TCP)
 	s.SetPortAvailability(destinationNodeName, int(tcpPortDest), TCP, false)
-	log.Printf("remove lock")
 
 	s.mu.Unlock()
 
@@ -426,7 +425,7 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 		return err
 	}
 	dataKeeper := pb.NewDataKeeperClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // TODO: timout should be dyanmic
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) 
 	destinationAddress := s.dataKeeperInfo[destinationNodeName].Address + ":" + strconv.Itoa(tcpPortDest)
 	response, err := dataKeeper.ReplicateFile(ctx, &pb.ReplicationRequest{DestinationAddress: destinationAddress, Filename: filename,DestinationName: destinationNodeName});
 	
@@ -448,6 +447,7 @@ func (s *MasterTracker) notifyMachineDataTransfer(sourceNodeName, destinationNod
 	s.mu.Unlock()
 	return err
 }
+
 func (s *MasterTracker) getPossibleDestinations(currentDKs []string) []string {
 	possible := make([]string, 0)
 	for dk := range s.dataKeeperInfo {
@@ -484,7 +484,7 @@ func notifyClient(isUploaded bool, address string) {
 	}
 
 	client := pb.NewClientClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // TODO: timout should be dyanmic
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	if _, err := client.NotifyUploadCompletion(ctx, &pb.UploadSuccessResponse{Success: isUploaded}); err != nil {
 		log.Printf("[ERROR] Failed to notify client: %v", err)
 	}

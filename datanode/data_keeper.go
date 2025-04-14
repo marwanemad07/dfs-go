@@ -42,12 +42,12 @@ type Globals struct {
 var globals = &Globals{}
 
 func main() {
-	masterAddress := "172.20.10.5" //*flag.String("m", "localhost", "master address")
-
-	if len(os.Args) < 5 {
-		fmt.Println("Usage: go run main.go <master_address_type> <number_of_ports> <start_tcp_ports> <node_name> ...")
+	
+	if len(os.Args) < 6 {
+		fmt.Println("Usage: go run main.go <master_address_type>  <number_of_ports> <start_tcp_ports> <node_name> <master_address> ...")
 		return
 	}
+	masterAddress :=  os.Args[5] //*flag.String("m", "localhost", "master address")
 
 	// Start TCP Server for receiving files
 	nodeAddress := ""
@@ -61,7 +61,7 @@ func main() {
 	case "network":
 		nodeAddress,_ = utils.GetWiFiIPv4()
 	default:
-		fmt.Println("Invalid mode. Use 'local' or 'docker'.")
+		fmt.Println("Invalid mode. Use 'local' or 'docker' or 'network'.")
 		os.Exit(1)
 	}
 
@@ -199,14 +199,10 @@ func (s *DataKeeperServer) startHeartbeat(masterAddress string, dataNodeAddress 
 		log.Printf("Could not connect to Master Tracker: %v", err)
 		return
 	}
-
-	// free resources
 	defer conn.Close()
 
-	// create gRPC client
 	client := pb.NewMasterTrackerClient(conn)
 
-	// send heartbeat every second till process stops
 	for {
 		sendHeartbeat(client, name, dataNodeAddress, s.portsTcp, s.portsGrpc)
 		time.Sleep(1 * time.Second)

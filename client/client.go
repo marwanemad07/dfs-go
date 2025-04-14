@@ -322,7 +322,7 @@ func receiveAndSaveFile(reader *bufio.Reader, file *os.File, totalSize int64) er
 	// Show download progress in a separate goroutine
 	go utils.ShowProgress(progress, totalSize)
 
-	buffer := make([]byte, 4096) // Use a reasonable buffer size (4 KB)
+	buffer := make([]byte, 4096) 
 	var received int64
 
 	for received < totalSize {
@@ -331,7 +331,6 @@ func receiveAndSaveFile(reader *bufio.Reader, file *os.File, totalSize int64) er
 			toRead = remaining
 		}
 
-		// Read exactly `toRead` bytes
 		n, err := io.ReadFull(reader, buffer[:toRead])
 		if n > 0 {
 			if _, writeErr := file.Write(buffer[:n]); writeErr != nil {
